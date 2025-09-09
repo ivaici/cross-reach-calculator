@@ -15,7 +15,7 @@ mode = st.radio("Choose a mode", MODE_LABELS)
 
 # ---------- helpers ----------
 def pct_to_unit(x):
-    """Accepts '0.84', '0,84', 84 -> returns 0.84"""
+    """Accepts '0.84', '0,84', 84 -> returns 0.84 (proportion 0..1)."""
     if x is None or x == "":
         return None
     try:
@@ -28,7 +28,7 @@ def unit_to_pct(x):
     return None if x is None else x * 100.0
 
 def incremental_series(r):
-    """Sainsbury incremental by row order."""
+    """Sainsbury-style incremental by row order for vector r (proportions)."""
     inc, unreached = [], 1.0
     for ri in r:
         inc.append(unreached * ri)
@@ -145,7 +145,7 @@ else:
         for b in chosen:
             U.loc[a,b] = pct_to_unit(U.loc[a,b])
 
-    # Symmetrize off-diagonals
+    # Symmetrize off-diagonals (average U(A∩B) and U(B∩A))
     for i,a in enumerate(chosen):
         for j,b in enumerate(chosen):
             if j <= i: continue
@@ -182,7 +182,7 @@ else:
     for i,a in enumerate(chosen):
         for j,b in enumerate(chosen):
             if j <= i: continue
-                # P(A∩B) ≈ U(A∩B)*rA*rB, clipped to feasibility
+            # P(A∩B) ≈ U(A∩B)*rA*rB, clipped to feasibility
             uab = U.loc[a,b]
             pab = float(uab * r[a] * r[b])
             P2.loc[a,b] = P2.loc[b,a] = min(pab, R[a], R[b])
@@ -235,14 +235,36 @@ else:
     r_vec = np.array([R[c] for c in chans])
     indep_union = 1 - np.prod(1 - r_vec)
     scale = 1.0
-    if indep_union > 1e-9 and est_union > 0:
-        for _ in range(8):
-            prod_term = np.prod(1 - scale*r_vec)
-            f = 1 - prod_term - est_union
-            if abs(f) < 1e-10: break
-            g = -prod_term * np.sum(r_vec / (1 - scale*r_vec))
-            if abs(g) < 1e-12: break
-            scale = np.clip(scale - f/g, 0.0, 5.0)
+
+    if len(chans) == 2:
+        # Exact scaling for 2 channels: solve 1 - (1 - s a)(1 - s b) = target
+        a, b = r_vec
+        target = est_union
+        Acoef = a*b
+        Bcoef = -(a+b)
+        Ccoef = target
+        if Acoef > 0:
+            disc = max(0.0, Bcoef*Bcoef - 4*Acoef*Ccoef)
+            s_root = ( -Bcoef - np.sqrt(disc) ) / (2*Acoef)
+            scale = float(np.clip(s_root, 0.0, 2.0))
+        else:
+            # If one channel is zero, fall back to linear
+            denom = (a + b) if (a + b) > 1e-12 else 1.0
+            scale = float(np.clip(target / denom, 0.0, 2.0))
+    else:
+        # Newton step with correct derivative sign; tight bounds
+        if indep_union > 1e-9 and est_union > 0:
+            for _ in range(8):
+                prod_term = np.prod(1 - scale*r_vec)
+                f = 1 - prod_term - est_union
+                if abs(f) < 1e-10:
+                    break
+                # d/ds [1 - Π (1 - s r_i)] = Π(1 - s r_i) * Σ r_i / (1 - s r_i)
+                g = prod_term * np.sum(r_vec / (1 - scale*r_vec))
+                if abs(g) < 1e-12:
+                    break
+                scale = float(np.clip(scale - f/g, 0.0, 2.0))
+
     r_scaled = np.clip(scale * r_vec, 0, 1)
     inc = incremental_series(r_scaled)
 
@@ -265,6 +287,6 @@ else:
             num_rows="fixed",
             key="usage_matrix_editor_bottom",
         )
-        st.session_state[key_mat] = edited  # will be used on next interaction
+        st.session_state[key_mat] = edited  # used on next interaction
         st.markdown("**Derived effective overlap P(A∩B) used for the union (%, after conversion & clipping)**")
         st.dataframe(P2.applymap(lambda v: None if v is None else round(v*100, 2)))
