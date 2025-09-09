@@ -27,14 +27,6 @@ def pct_to_unit(x):
 def unit_to_pct(x):
     return None if x is None else x * 100.0
 
-def incremental_series(r):
-    """Sainsbury-style incremental by row order for vector r (proportions)."""
-    inc, unreached = [], 1.0
-    for ri in r:
-        inc.append(unreached * ri)
-        unreached *= (1 - ri)
-    return inc
-
 # ---------- Mode 1: Independence ----------
 if mode == MODE_LABELS[0]:
     st.subheader("Independence: Sainsbury formula")
@@ -61,13 +53,13 @@ if mode == MODE_LABELS[0]:
     cross = 1 - np.prod(1 - r)
     st.metric("Overall Cross-Media Reach", f"{cross:.1%}")
 
-    inc = incremental_series(r)
-    chart_df = pd.DataFrame({"Channel": edited["Channel"], "Incremental": inc})
+    # Per-channel media reach chart
+    chart_df = pd.DataFrame({"Channel": edited["Channel"], "Media reach": r})
     st.altair_chart(
         alt.Chart(chart_df).mark_bar().encode(
             x=alt.X("Channel:N", sort=None, title="Channel"),
-            y=alt.Y("Incremental:Q", axis=alt.Axis(format="%"), title="Incremental Reach"),
-            tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Incremental:Q", format=".1%")],
+            y=alt.Y("Media reach:Q", axis=alt.Axis(format="%"), title="Media reach"),
+            tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Media reach:Q", format=".1%")],
         ).properties(height=320),
         use_container_width=True
     )
@@ -76,7 +68,6 @@ if mode == MODE_LABELS[0]:
         details = edited.copy()
         details["Reach (0–1)"] = r
         details["1 − Reach"]   = 1 - r
-        details["Incremental"] = inc
         st.dataframe(details, use_container_width=True)
 
     st.info("Assumes independence across channels. For overlaps, use the next mode.")
@@ -228,53 +219,6 @@ else:
             y=alt.Y("Media reach:Q", axis=alt.Axis(format="%")),
             tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Media reach:Q", format=".1%")],
         ).properties(height=280),
-        use_container_width=True
-    )
-
-    # Incremental (approx): scale independence to match estimated union
-    r_vec = np.array([R[c] for c in chans])
-    indep_union = 1 - np.prod(1 - r_vec)
-    scale = 1.0
-
-    if len(chans) == 2:
-        # Exact scaling for 2 channels: solve 1 - (1 - s a)(1 - s b) = target
-        a, b = r_vec
-        target = est_union
-        Acoef = a*b
-        Bcoef = -(a+b)
-        Ccoef = target
-        if Acoef > 0:
-            disc = max(0.0, Bcoef*Bcoef - 4*Acoef*Ccoef)
-            s_root = ( -Bcoef - np.sqrt(disc) ) / (2*Acoef)
-            scale = float(np.clip(s_root, 0.0, 2.0))
-        else:
-            # If one channel is zero, fall back to linear
-            denom = (a + b) if (a + b) > 1e-12 else 1.0
-            scale = float(np.clip(target / denom, 0.0, 2.0))
-    else:
-        # Newton step with correct derivative sign; tight bounds
-        if indep_union > 1e-9 and est_union > 0:
-            for _ in range(8):
-                prod_term = np.prod(1 - scale*r_vec)
-                f = 1 - prod_term - est_union
-                if abs(f) < 1e-10:
-                    break
-                # d/ds [1 - Π (1 - s r_i)] = Π(1 - s r_i) * Σ r_i / (1 - s r_i)
-                g = prod_term * np.sum(r_vec / (1 - scale*r_vec))
-                if abs(g) < 1e-12:
-                    break
-                scale = float(np.clip(scale - f/g, 0.0, 2.0))
-
-    r_scaled = np.clip(scale * r_vec, 0, 1)
-    inc = incremental_series(r_scaled)
-
-    inc_df = pd.DataFrame({"Channel": chans, "Incremental (approx)": inc})
-    st.altair_chart(
-        alt.Chart(inc_df).mark_bar().encode(
-            x=alt.X("Channel:N", sort=None),
-            y=alt.Y("Incremental (approx):Q", axis=alt.Axis(format="%")),
-            tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Incremental (approx):Q", format=".1%")],
-        ).properties(height=320),
         use_container_width=True
     )
 
