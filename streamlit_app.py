@@ -279,16 +279,17 @@ elif mode == MODE_LABELS[2]:
 # ---------- Mode 4 (MONTHLY USAGE MATRIX ONLY, n channels) ----------
 elif mode == "Overlap-aware (n channels, pairwise approx)":
     st.subheader("Overlap-aware (n channels): monthly usage matrix + campaign reaches")
-    st.write("Edit the monthly usage matrix U(A), U(A∩B) (% of population). Enter campaign reaches P(A). "
-             "The app converts U(A∩B) → campaign pairwise P(A∩B) using within-user reach rA = P(A)/U(A).")
+    st.write("Enter campaign reaches P(A) (% of population). The monthly usage matrix U(A), U(A∩B) "
+             "is editable at the end (most teams will keep the defaults).")
 
     # Catalog & selection
     catalog = ["TV","Radio","OOH","Print","Cinema","VOD","Social media","Search","Other sites"]
     chosen = st.multiselect("Channels to include", catalog, default=["TV","Social media","Print"])
     if len(chosen) < 2:
-        st.info("Select at least two channels."); st.stop()
+        st.info("Select at least two channels to calculate.")
+        st.stop()
 
-    # Default MONTHLY USAGE table (your values). Diagonal = U(A), off-diagonals = U(A∩B).
+    # --- Defaults for Monthly Usage U (diagonal = U(A), off-diagonal = U(A∩B))
     default_usage = {
         ("TV","TV"):0.84, ("TV","Radio"):0.55, ("TV","OOH"):0.55, ("TV","Print"):0.39, ("TV","Cinema"):0.55, ("TV","VOD"):0.55, ("TV","Social media"):0.81, ("TV","Search"):0.55, ("TV","Other sites"):0.55,
         ("Radio","TV"):0.55, ("Radio","Radio"):0.55, ("Radio","OOH"):0.55, ("Radio","Print"):0.55, ("Radio","Cinema"):0.55, ("Radio","VOD"):0.55, ("Radio","Social media"):0.55, ("Radio","Search"):0.55, ("Radio","Other sites"):0.55,
@@ -301,23 +302,16 @@ elif mode == "Overlap-aware (n channels, pairwise approx)":
         ("Other sites","TV"):0.55, ("Other sites","Radio"):0.55, ("Other sites","OOH"):0.55, ("Other sites","Print"):0.55, ("Other sites","Cinema"):0.55, ("Other sites","VOD"):0.55, ("Other sites","Social media"):0.55, ("Other sites","Search"):0.55, ("Other sites","Other sites"):0.55,
     }
 
-    # Helpers for parsing percent/decimal (incl. commas)
-    def pct_to_unit_local(x):
+    # --- Helpers
+    def pct_to_unit(x):
         if x is None or x == "": return None
         try: x = float(str(x).replace(",", "."))
         except: return None
         return x/100.0 if x > 1 else x
-    def unit_to_pct_local(x): return None if x is None else x*100
 
-    # Editable USAGE matrix in %
-    mat = pd.DataFrame(index=chosen, columns=chosen, dtype=float)
-    for a in chosen:
-        for b in chosen:
-            mat.loc[a,b] = unit_to_pct_local(default_usage.get((a,b), np.nan))
-    st.write("**Monthly usage matrix U** — edit values (% of population). Diagonal cells = U(A).")
-    U_edit = st.data_editor(mat, use_container_width=True, num_rows="fixed", key="usage_matrix_editor")
+    def unit_to_pct(x): return None if x is None else x * 100.0
 
-    # Campaign reaches (user-entered) % of population
+    # --- Campaign reaches first (friendlier messaging)
     st.write("**Campaign reaches by channel** (% of population).")
     marg_df = pd.DataFrame({"Channel": chosen, "Reach %": [None]*len(chosen)})
     marg_edit = st.data_editor(
@@ -328,15 +322,36 @@ elif mode == "Overlap-aware (n channels, pairwise approx)":
         },
         hide_index=True,
         use_container_width=True,
-        key="campaign_marginals_editor",
+        key="campaign_marginals_editor_clean",
     )
-    A = {ch: pct_to_unit_local(marg_edit.loc[i, "Reach %"]) for i, ch in enumerate(chosen)}
+    A = {ch: pct_to_unit(marg_edit.loc[i, "Reach %"]) for i, ch in enumerate(chosen)}
+    if any(A[ch] is None for ch in chosen):
+        st.info("Enter a **campaign reach (%)** for each selected channel to calculate results.")
+        st.stop()
+    if any(not (0 <= A[ch] <= 1) for ch in chosen):
+        st.error("Campaign reaches must be between 0 and 100%.")
+        st.stop()
 
-    # Parse usage matrix to proportions & symmetrize off-diagonals
-    U = U_edit.copy()
+    # --- Keep Monthly usage matrix at the end (but still use edits via session state)
+    # Initialize usage matrix in session_state on first load or when channels change
+    key_mat = "usage_matrix_df"
+    if (key_mat not in st.session_state 
+        or list(st.session_state[key_mat].index) != chosen 
+        or list(st.session_state[key_mat].columns) != chosen):
+        mat_init = pd.DataFrame(index=chosen, columns=chosen, dtype=float)
+        for a in chosen:
+            for b in chosen:
+                mat_init.loc[a,b] = unit_to_pct(default_usage.get((a,b), np.nan))
+        st.session_state[key_mat] = mat_init
+
+    # Pull current usage matrix values (in %), convert to proportions
+    U_df_pct = st.session_state[key_mat].copy()
+    U = U_df_pct.copy()
     for a in chosen:
         for b in chosen:
-            U.loc[a,b] = pct_to_unit_local(U.loc[a,b])
+            U.loc[a,b] = pct_to_unit(U.loc[a,b])
+
+    # Symmetrize off-diagonals (average A∩B and B∩A)
     for i,a in enumerate(chosen):
         for j,b in enumerate(chosen):
             if j <= i: continue
@@ -345,30 +360,28 @@ elif mode == "Overlap-aware (n channels, pairwise approx)":
             v = 0.5*(ab+ba) if len(both)==2 else (both[0] if len(both)==1 else None)
             U.loc[a,b] = U.loc[b,a] = v
 
-    # Validations
+    # --- Validate usage diagonals and pairwise
     for a in chosen:
-        ua, pa = U.loc[a,a], A[a]
-        if ua is None:
-            st.error(f"Diagonal U({a}) is required."); st.stop()
-        if ua < 0 or ua > 1:
-            st.error(f"U({a}) must be 0–1 (or 0–100%)."); st.stop()
-        if pa is None:
-            st.error(f"Campaign reach P({a}) is required."); st.stop()
-        if pa < 0 or pa > 1:
-            st.error(f"P({a}) must be 0–1 (or 0–100%)."); st.stop()
-        if pa - ua > 1e-9:
-            st.error(f"P({a}) ({pa:.2%}) cannot exceed usage U({a}) ({ua:.2%})."); st.stop()
-    # Validate pairwise usage bounds
+        ua = U.loc[a,a]
+        if ua is None or not (0 <= ua <= 1):
+            st.error("Monthly usage U(A) must be set (0–100%) on the diagonal of the matrix in the Math & inputs section.")
+            st.stop()
+        if A[a] - ua > 1e-9:
+            st.error(f"Campaign reach P({a}) ({A[a]:.2%}) cannot exceed monthly usage U({a}) ({ua:.2%}).")
+            st.stop()
+
     for i,a in enumerate(chosen):
         for j,b in enumerate(chosen):
             if j <= i: continue
             uab = U.loc[a,b]
             if uab is None:
-                st.error(f"Please fill U({a}∩{b})."); st.stop()
+                st.error(f"Please fill monthly usage overlap U({a}∩{b}) in the matrix below.")
+                st.stop()
             if uab < 0 or uab > min(U.loc[a,a], U.loc[b,b]) + 1e-9:
-                st.error(f"U({a}∩{b}) must be ≤ min(U({a}),U({b}))."); st.stop()
+                st.error(f"U({a}∩{b}) must be ≤ min(U({a}), U({b})).")
+                st.stop()
 
-    # Convert to within-user reach and campaign pairwise
+    # --- Convert usage → campaign pairwise using within-user reach
     r = {a: (0.0 if U.loc[a,a] in (None,0) else min(1.0, A[a]/U.loc[a,a])) for a in chosen}
     P2 = pd.DataFrame(index=chosen, columns=chosen, dtype=float)
     for a in chosen:
@@ -377,18 +390,14 @@ elif mode == "Overlap-aware (n channels, pairwise approx)":
         for j,b in enumerate(chosen):
             if j <= i: continue
             uab = U.loc[a,b]
-            pab = float(uab * r[a] * r[b])  # P_campaign(A∩B) ≈ U(A∩B)*rA*rB
-            # Clip to feasibility
-            pab = min(pab, A[a], A[b])
+            pab = float(uab * r[a] * r[b])    # P_campaign(A∩B) ≈ U(A∩B)*rA*rB
+            pab = min(pab, A[a], A[b])        # clip to feasibility
             P2.loc[a,b] = P2.loc[b,a] = pab
 
-    # Bounds + heuristic triples (Kirkwood)
-    chans = chosen[:]  # preserve order for incremental view
+    # --- Bounds + heuristic triples (Kirkwood)
+    chans = chosen[:]  # keep order for incremental
     sum_A = sum(A[c] for c in chans)
-    sum_pairs = 0.0
-    for i in range(len(chans)):
-        for j in range(i+1, len(chans)):
-            sum_pairs += P2.loc[chans[i], chans[j]]
+    sum_pairs = sum(P2.loc[chans[i], chans[j]] for i in range(len(chans)) for j in range(i+1, len(chans)))
 
     lower_pair = max(max(A[c] for c in chans), sum_A - sum_pairs)   # Bonferroni LB
     upper_simple = min(1.0, sum_A)                                  # simple UB
@@ -411,31 +420,21 @@ elif mode == "Overlap-aware (n channels, pairwise approx)":
 
     est_union = float(np.clip(sum_A - sum_pairs + triple_sum, lower_pair, upper_simple))
 
+    # --- Outputs
     c1, c2 = st.columns(2)
-    with c1: st.metric("Estimated cross-media reach (n-channel)", f"{est_union:.1%}")
-    with c2: st.caption(f"Bounds: LB≈{lower_pair:.1%}, UB≈{upper_simple:.1%}")
+    with c1:
+        st.metric("Estimated cross-media reach (n-channel)", f"{est_union:.1%}")
+    with c2:
+        st.caption(f"Bounds: LB≈{lower_pair:.1%}, UB≈{upper_simple:.1%}")
 
-    # OPTIONAL VISUALS
-    show_reach = st.checkbox("Show per-channel campaign reach bars", value=True)
-    show_within = st.checkbox("Show within-user reach rᵢ bars (P(A)/U(A))", value=False)
-
-    if show_reach:
-        reach_df = pd.DataFrame({"Channel": chans, "Reach": [A[c] for c in chans]})
-        st.altair_chart(
-            alt.Chart(reach_df).mark_bar().encode(
-                x=alt.X("Channel:N", sort=None), y=alt.Y("Reach:Q", axis=alt.Axis(format="%")),
-                tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Reach:Q", format=".1%")]
-            ).properties(height=280), use_container_width=True
-        )
-
-    if show_within:
-        r_df = pd.DataFrame({"Channel": chans, "Within-user rᵢ": [r[c] for c in chans]})
-        st.altair_chart(
-            alt.Chart(r_df).mark_bar().encode(
-                x=alt.X("Channel:N", sort=None), y=alt.Y("Within-user rᵢ:Q", axis=alt.Axis(format="%")),
-                tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Within-user rᵢ:Q", format=".1%")]
-            ).properties(height=280), use_container_width=True
-        )
+    # Per-channel campaign reach bars (keep)
+    reach_df = pd.DataFrame({"Channel": chans, "Reach": [A[c] for c in chans]})
+    st.altair_chart(
+        alt.Chart(reach_df).mark_bar().encode(
+            x=alt.X("Channel:N", sort=None), y=alt.Y("Reach:Q", axis=alt.Axis(format="%")),
+            tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Reach:Q", format=".1%")]
+        ).properties(height=280), use_container_width=True
+    )
 
     # Incremental (approx): scale independence to match est_union
     r_vec = np.array([A[c] for c in chans])
@@ -450,7 +449,6 @@ elif mode == "Overlap-aware (n channels, pairwise approx)":
             if abs(g) < 1e-12: break
             scale = np.clip(scale - f/g, 0.0, 5.0)
     r_scaled = np.clip(scale * r_vec, 0, 1)
-    # incremental by order
     inc, unreached = [], 1.0
     for ri in r_scaled:
         inc.append(unreached * ri)
@@ -465,18 +463,18 @@ elif mode == "Overlap-aware (n channels, pairwise approx)":
         use_container_width=True
     )
 
-    with st.expander("Matrices & details"):
-        # Show U and the derived campaign P(A∩B)
-        st.markdown("**Monthly usage U (after edits, %)**")
-        st.dataframe(U.applymap(lambda v: None if v is None else round(v*100, 2)))
-        st.markdown("**Derived campaign P(A∩B) used for union (%, after clipping)**")
+    # --- Monthly usage matrix at the END (editable)
+    with st.expander("Math & inputs ▸ Monthly usage matrix U (edit if needed)"):
+        st.markdown("Diagonal = U(A), off-diagonals = U(A∩B). Values are % of population. "
+                    "Edits here update the calculation on the next refresh.")
+        edited = st.data_editor(
+            U_df_pct,
+            use_container_width=True,
+            num_rows="fixed",
+            key="usage_matrix_editor_bottom",
+        )
+        # Save back to session state for next run
+        st.session_state[key_mat] = edited
+        # Show derived campaign pairwise used
+        st.markdown("**Derived campaign P(A∩B) used for the union (%, after conversion & clipping)**")
         st.dataframe(P2.applymap(lambda v: None if v is None else round(v*100, 2)))
-        details = pd.DataFrame({
-            "Channel": chans,
-            "U(A) monthly": [U.loc[c,c] for c in chans],
-            "P(A) campaign": [A[c] for c in chans],
-            "Within-user rᵢ": [r[c] for c in chans],
-        }).style.format({"U(A) monthly":"{:.2%}", "P(A) campaign":"{:.2%}", "Within-user rᵢ":"{:.2%}"})
-        st.markdown("**Per-channel summary**")
-        st.dataframe(details, use_container_width=True)
-
