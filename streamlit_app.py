@@ -6,14 +6,14 @@ import altair as alt
 st.set_page_config(page_title="Cross-Reach Calculator", page_icon="📈", layout="centered")
 st.title("📈 Cross-Reach Calculator")
 
-# -------------------- Attention adjustment indexes --------------------
+# -------------------- Attention adjustment indexes (INTERNAL, NOT SHOWN) --------------------
 ADJ = {
     "Cinema": 0.98,
     "Direct mail": 0.56,
     "Influencers": 0.20,
     "Magazines": 0.56,
     "Newspapers": 0.29,
-    "News portals": 0.20,   # aka "Other sites" if you prefer that label
+    "News portals": 0.20,   # rename to "Other sites" in the catalog if you prefer
     "OOH": 0.41,
     "Podcasts": 0.61,
     "POS (Instore)": 0.42,
@@ -23,9 +23,6 @@ ADJ = {
     "TV": 0.55,
     "VOD": 0.61,
 }
-
-with st.expander("Attention adjustment indexes (Architect)"):
-    st.dataframe(pd.DataFrame({"Channel": list(ADJ.keys()), "Adjustment": list(ADJ.values())}))
 
 # -------------------- Global reach basis & mode --------------------
 reach_basis = st.radio(
@@ -65,7 +62,7 @@ def apply_attention(channel, value01):
 # =====================================================================
 if mode == MODE_LABELS[0]:
     st.subheader("Independence: Sainsbury formula")
-    st.caption("Cross reach = 1 − ∏(1 − Rᵢ). If 'Attention-adjusted' is selected, Rᵢ is multiplied by its index.")
+    st.caption("Cross reach = 1 − ∏(1 − Rᵢ). If 'Attention-adjusted' is selected, Rᵢ is multiplied by its index (internally).")
 
     rows = st.sidebar.slider("Rows (channels)", 3, 30, 5, key="rows_ind")
     seed = [
@@ -93,7 +90,6 @@ if mode == MODE_LABELS[0]:
 
     channels = edited["Channel"].fillna("").astype(str).tolist()
     r_input = (edited["Reach %"].fillna(0) / 100.0).clip(0, 1).tolist()
-    # Apply attention if selected (unknown channel names default to factor 1.0)
     r_eff = [apply_attention(ch, r) if use_attentive else r for ch, r in zip(channels, r_input)]
 
     cross = 1 - np.prod([1 - x for x in r_eff])
@@ -108,7 +104,7 @@ if mode == MODE_LABELS[0]:
         .mark_bar()
         .encode(
             x=alt.X("Channel:N", sort=None, title="Channel"),
-            y=alt.Y("Reach used:Q", axis=alt.Axis(format="%"), title="Media reach used"),
+            y=alt.Y("Reach used:Q", axis=alt.Axis(format="%", title="Media reach used")),
             tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Reach used:Q", format=".1%")],
         )
         .properties(height=320),
@@ -116,15 +112,12 @@ if mode == MODE_LABELS[0]:
     )
 
     with st.expander("Details"):
-        adj_col = [ADJ.get(ch, 1.0) for ch in channels]
         details = edited.copy()
-        details["Adjustment"] = adj_col
-        details["Reach (0–1) raw"] = r_input
         details["Reach (0–1) used"] = r_eff
-        details["Adjusted reach %"] = [x * 100 for x in r_eff]
+        details["Reach used %"] = [x * 100 for x in r_eff]
         st.dataframe(details, use_container_width=True)
     if use_attentive and any(ch not in ADJ for ch in channels if ch.strip()):
-        st.warning("Some channel names are not in the adjustment table; factor 1.0 was used for those.")
+        st.warning("Some channel names are not in the internal adjustment table; factor 1.0 was used for those.")
 
 # =====================================================================
 # Mode 2: Overlap-aware (monthly usage + media reach)
@@ -133,7 +126,7 @@ else:
     st.subheader("Overlap-aware: monthly usage matrix + media reach")
     st.write(
         "Enter **media reach** (%) for each selected channel. "
-        "If 'Attention-adjusted' is selected, those reaches are multiplied by the channel's index. "
+        "If 'Attention-adjusted' is selected, reaches are multiplied internally by the channel's index. "
         "The **monthly usage** matrix U(A) and U(A∩B) is editable at the end."
     )
 
@@ -201,7 +194,7 @@ else:
         st.error("Media reach values must be between 0 and 100%.")
         st.stop()
 
-    # Apply attention (if selected)
+    # Apply attention (internally) if selected
     R = {ch: apply_attention(ch, R_raw[ch]) for ch in chosen} if use_attentive else R_raw
 
     # --- Monthly usage matrix (editable, % values shown) ---
@@ -328,10 +321,9 @@ else:
         )
         st.session_state[key_mat] = edited
 
-        # Diagnostics table
+        # Diagnostics table (indexes hidden)
         diag = pd.DataFrame({
             "Channel": chans,
-            "Adjustment": [ADJ.get(c, 1.0) for c in chans],
             "Reach % (input)": [R_raw[c] * 100 for c in chans],
             "Reach % (used)": [R[c] * 100 for c in chans],
             "U(A) % (monthly users)": [U.loc[c, c] * 100 for c in chans],
