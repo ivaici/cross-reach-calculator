@@ -34,7 +34,7 @@ use_attentive = (reach_basis == "Attention-adjusted reach")
 
 MODE_LABELS = [
     "Independence (Sainsbury)",
-    "Overlap-aware (monthly usage + media reach)",
+    "Overlap-aware (Sainsbury + monthly usage)",
 ]
 mode = st.radio("Choose a mode", MODE_LABELS)
 
@@ -122,10 +122,10 @@ if mode == MODE_LABELS[0]:
         st.warning("Some channel names are not in the internal adjustment table; factor 1.0 was used for those.")
 
 # =====================================================================
-# Mode 2: Overlap-aware (monthly usage + media reach)
+# Mode 2: Overlap-aware (Sainsbury + monthly usage)
 # =====================================================================
 else:
-    st.subheader("Overlap-aware: monthly usage matrix + media reach")
+    st.subheader("Overlap-aware: Sainsbury + monthly usage matrix")
     st.write(
         "Enter **media reach** (%) for each selected channel. "
         "If 'Attention-adjusted reach' is selected, reaches are multiplied internally by the channel's index. "
