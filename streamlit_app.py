@@ -67,7 +67,7 @@ if mode == MODE_LABELS[0]:
     st.subheader("Independence: Sainsbury formula")
     st.caption("Cross reach = 1 − ∏(1 − Rᵢ). If 'Attention-adjusted' is selected, Rᵢ is multiplied by its index.")
 
-    rows = st.sidebar.slider("Rows (channels)", 3, 30, 8, key="rows_ind")
+    rows = st.sidebar.slider("Rows (channels)", 3, 30, 5, key="rows_ind")
     seed = [
         {"Channel": "TV", "Reach %": 65.0},
         {"Channel": "Social media", "Reach %": 35.0},
