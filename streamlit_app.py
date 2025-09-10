@@ -6,14 +6,14 @@ import altair as alt
 st.set_page_config(page_title="Cross-Reach Calculator", page_icon="📈", layout="centered")
 st.title("📈 Cross-Reach Calculator")
 
-# -------------------- Attention adjustment indexes (INTERNAL, NOT SHOWN) --------------------
+# -------------------- Attention adjustment indexes (internal) --------------------
 ADJ = {
     "Cinema": 0.98,
     "Direct mail": 0.56,
     "Influencers": 0.20,
     "Magazines": 0.56,
     "Newspapers": 0.29,
-    "News portals": 0.20,   # rename to "Other sites" in the catalog if you prefer
+    "News portals": 0.20,
     "OOH": 0.41,
     "Podcasts": 0.61,
     "POS (Instore)": 0.42,
