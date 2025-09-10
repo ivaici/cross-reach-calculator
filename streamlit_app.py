@@ -98,14 +98,15 @@ if mode == MODE_LABELS[0]:
         f"{cross:.1%}",
     )
 
-    chart_df = pd.DataFrame({"Channel": channels, "Reach used": r_eff})
+    # Chart with y-axis title "Media reach"
+    chart_df = pd.DataFrame({"Channel": channels, "Media reach": r_eff})
     st.altair_chart(
         alt.Chart(chart_df)
         .mark_bar()
         .encode(
             x=alt.X("Channel:N", sort=None, title="Channel"),
-            y=alt.Y("Reach used:Q", axis=alt.Axis(format="%", title="Media reach used")),
-            tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Reach used:Q", format=".1%")],
+            y=alt.Y("Media reach:Q", axis=alt.Axis(format="%", title="Media reach")),
+            tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Media reach:Q", format=".1%")],
         )
         .properties(height=320),
         use_container_width=True,
@@ -296,15 +297,15 @@ else:
     with c2:
         st.caption(f"Bounds: LB≈{lower_pair:.1%}, UB≈{upper_simple:.1%}")
 
-    # Per-channel (used) reaches
-    reach_df = pd.DataFrame({"Channel": chans, "Reach used": [R[c] for c in chans]})
+    # Per-channel chart with y-axis title "Media reach"
+    reach_df = pd.DataFrame({"Channel": chans, "Media reach": [R[c] for c in chans]})
     st.altair_chart(
         alt.Chart(reach_df)
         .mark_bar()
         .encode(
             x=alt.X("Channel:N", sort=None),
-            y=alt.Y("Reach used:Q", axis=alt.Axis(format="%")),
-            tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Reach used:Q", format=".1%")],
+            y=alt.Y("Media reach:Q", axis=alt.Axis(format="%", title="Media reach")),
+            tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Media reach:Q", format=".1%")],
         )
         .properties(height=280),
         use_container_width=True,
@@ -321,9 +322,10 @@ else:
         )
         st.session_state[key_mat] = edited
 
-        # Diagnostics table (indexes hidden)
+        # Diagnostics table (includes adjustment for selected channels)
         diag = pd.DataFrame({
             "Channel": chans,
+            "Adjustment": [ADJ.get(c, 1.0) for c in chans],
             "Reach % (input)": [R_raw[c] * 100 for c in chans],
             "Reach % (used)": [R[c] * 100 for c in chans],
             "U(A) % (monthly users)": [U.loc[c, c] * 100 for c in chans],
