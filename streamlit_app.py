@@ -22,7 +22,7 @@ ADJ = {
     "Social media": 0.20,
     "TV": 0.55,
     "VOD": 0.61,
-}
+} 
 
 # -------------------- Global reach basis & mode --------------------
 reach_basis = st.radio(
