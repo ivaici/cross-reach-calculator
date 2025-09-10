@@ -24,13 +24,13 @@ ADJ = {
     "VOD": 0.61,
 }
 
-with st.expander("Attention adjustment indexes (Architect Lumen)"):
+with st.expander("Attention adjustment indexes (Architect)"):
     st.dataframe(pd.DataFrame({"Channel": list(ADJ.keys()), "Adjustment": list(ADJ.values())}))
 
 # -------------------- Global reach basis & mode --------------------
 reach_basis = st.radio(
     "Reach basis",
-    ["Regular reach", "Attention-adjusted (Architect Lumen)"],
+    ["Regular reach", "Attention-adjusted (Architect)"],
     horizontal=True,
 )
 use_attentive = reach_basis.startswith("Attention")
