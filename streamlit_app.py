@@ -26,11 +26,11 @@ ADJ = {
 
 # -------------------- Global reach basis & mode --------------------
 reach_basis = st.radio(
-    "Reach basis",
-    ["Regular reach", "Attention-adjusted (Architect)"],
+    "Choose a reach basis",
+    ["Regular reach", "Attention-adjusted reach"],
     horizontal=True,
 )
-use_attentive = reach_basis.startswith("Attention")
+use_attentive = (reach_basis == "Attention-adjusted reach")
 
 MODE_LABELS = [
     "Independence (Sainsbury)",
@@ -62,7 +62,7 @@ def apply_attention(channel, value01):
 # =====================================================================
 if mode == MODE_LABELS[0]:
     st.subheader("Independence: Sainsbury formula")
-    st.caption("Cross reach = 1 − ∏(1 − Rᵢ). If 'Attention-adjusted' is selected, Rᵢ is multiplied by its index (internally).")
+    st.caption("Cross reach = 1 − ∏(1 − Rᵢ). If 'Attention-adjusted reach' is selected, each Rᵢ is multiplied by its index internally.")
 
     rows = st.sidebar.slider("Rows (channels)", 3, 30, 5, key="rows_ind")
     seed = [
@@ -117,6 +117,7 @@ if mode == MODE_LABELS[0]:
         details["Reach (0–1) used"] = r_eff
         details["Reach used %"] = [x * 100 for x in r_eff]
         st.dataframe(details, use_container_width=True)
+
     if use_attentive and any(ch not in ADJ for ch in channels if ch.strip()):
         st.warning("Some channel names are not in the internal adjustment table; factor 1.0 was used for those.")
 
@@ -127,7 +128,7 @@ else:
     st.subheader("Overlap-aware: monthly usage matrix + media reach")
     st.write(
         "Enter **media reach** (%) for each selected channel. "
-        "If 'Attention-adjusted' is selected, reaches are multiplied internally by the channel's index. "
+        "If 'Attention-adjusted reach' is selected, reaches are multiplied internally by the channel's index. "
         "The **monthly usage** matrix U(A) and U(A∩B) is editable at the end."
     )
 
@@ -322,7 +323,7 @@ else:
         )
         st.session_state[key_mat] = edited
 
-        # Diagnostics table (includes adjustment for selected channels)
+        # Diagnostics table (includes adjustment; hides row numbers)
         diag = pd.DataFrame({
             "Channel": chans,
             "Adjustment": [ADJ.get(c, 1.0) for c in chans],
@@ -331,7 +332,7 @@ else:
             "U(A) % (monthly users)": [U.loc[c, c] * 100 for c in chans],
         })
         st.markdown("**Diagnostics (per channel)**")
-        st.dataframe(diag, use_container_width=True)
+        st.dataframe(diag, use_container_width=True, hide_index=True)
 
         st.markdown("**Derived effective overlap P(A∩B) used for the union (%, after conversion & clipping)**")
         st.dataframe(P2.applymap(lambda v: None if v is None else round(v * 100, 2)))
