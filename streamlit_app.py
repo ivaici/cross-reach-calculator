@@ -13,7 +13,7 @@ ADJ = {
     "Influencers": 0.20,
     "Magazines": 0.56,
     "Newspapers": 0.29,
-    "News portals": 0.20,   
+    "News portals": 0.20,   # rename to "Other sites" in the catalog if you prefer
     "OOH": 0.41,
     "Podcasts": 0.61,
     "POS (Instore)": 0.42,
@@ -22,12 +22,12 @@ ADJ = {
     "Social media": 0.20,
     "TV": 0.55,
     "VOD": 0.61,
-} 
+}
 
 # -------------------- Global reach basis & mode --------------------
 reach_basis = st.radio(
-    "Choose Reach basis",
-    ["Regular reach", "Attention-adjusted reach"],
+    "Reach basis",
+    ["Regular reach", "Attention-adjusted (Architect)"],
     horizontal=True,
 )
 use_attentive = reach_basis.startswith("Attention")
@@ -62,7 +62,7 @@ def apply_attention(channel, value01):
 # =====================================================================
 if mode == MODE_LABELS[0]:
     st.subheader("Independence: Sainsbury formula")
-    st.caption("Cross reach = 1 − ∏(1 − Rᵢ). If 'Attention-adjusted' is selected, Rᵢ is multiplied by its index.")
+    st.caption("Cross reach = 1 − ∏(1 − Rᵢ). If 'Attention-adjusted' is selected, Rᵢ is multiplied by its index (internally).")
 
     rows = st.sidebar.slider("Rows (channels)", 3, 30, 5, key="rows_ind")
     seed = [
@@ -98,19 +98,18 @@ if mode == MODE_LABELS[0]:
         f"{cross:.1%}",
     )
 
-reach_df = pd.DataFrame({"Channel": chans, "Media reach": [R[c] for c in chans]})
-st.altair_chart(
-    alt.Chart(reach_df)
-    .mark_bar()
-    .encode(
-        x=alt.X("Channel:N", sort=None),
-        y=alt.Y("Media reach:Q", axis=alt.Axis(format="%", title="Media reach")),
-        tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Media reach:Q", format=".1%")],
+    chart_df = pd.DataFrame({"Channel": channels, "Reach used": r_eff})
+    st.altair_chart(
+        alt.Chart(chart_df)
+        .mark_bar()
+        .encode(
+            x=alt.X("Channel:N", sort=None, title="Channel"),
+            y=alt.Y("Reach used:Q", axis=alt.Axis(format="%", title="Media reach used")),
+            tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Reach used:Q", format=".1%")],
+        )
+        .properties(height=320),
+        use_container_width=True,
     )
-    .properties(height=280),
-    use_container_width=True,
-)
-
 
     with st.expander("Details"):
         details = edited.copy()
