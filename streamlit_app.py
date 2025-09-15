@@ -24,19 +24,23 @@ ADJ = {
     "VOD": 0.61,
 }
 
-# -------------------- Global reach basis & mode --------------------
-reach_basis = st.radio(
-    "Choose a reach basis",
-    ["Regular reach", "Attention-adjusted reach"],
-    horizontal=True,
-)
-use_attentive = (reach_basis == "Attention-adjusted reach")
-
+# -------------------- Mode first --------------------
 MODE_LABELS = [
     "Independence (Sainsbury)",
     "Overlap-aware (Sainsbury + monthly usage)",
 ]
 mode = st.radio("Choose a mode", MODE_LABELS)
+
+# Only show reach-basis switch in Overlap-aware mode
+use_attentive = False
+if mode == MODE_LABELS[1]:
+    reach_basis = st.radio(
+        "Choose a reach basis",
+        ["Regular reach", "Attention-adjusted reach"],
+        horizontal=True,
+        key="reach_basis_selector",
+    )
+    use_attentive = (reach_basis == "Attention-adjusted reach")
 
 # -------------------- helpers --------------------
 def pct_to_unit(x):
@@ -58,11 +62,11 @@ def apply_attention(channel, value01):
     return float(np.clip(value01 * factor, 0.0, 1.0))
 
 # =====================================================================
-# Mode 1: Independence (Sainsbury)
+# Mode 1: Independence (Sainsbury) — no attention option
 # =====================================================================
 if mode == MODE_LABELS[0]:
     st.subheader("Independence: Sainsbury formula")
-    st.caption("Cross reach = 1 − ∏(1 − Rᵢ). If 'Attention-adjusted reach' is selected, each Rᵢ is multiplied by its index internally.")
+    st.caption("Cross reach = 1 − ∏(1 − Rᵢ). Assumes channels are independent.")
 
     rows = st.sidebar.slider("Rows (channels)", 3, 30, 5, key="rows_ind")
     seed = [
@@ -90,15 +94,14 @@ if mode == MODE_LABELS[0]:
 
     channels = edited["Channel"].fillna("").astype(str).tolist()
     r_input = (edited["Reach %"].fillna(0) / 100.0).clip(0, 1).tolist()
-    r_eff = [apply_attention(ch, r) if use_attentive else r for ch, r in zip(channels, r_input)]
+
+    # No attention applied in Independence mode
+    r_eff = r_input[:]
 
     cross = 1 - np.prod([1 - x for x in r_eff])
-    st.metric(
-        f"Overall Cross-Media Reach ({'Attentive' if use_attentive else 'Regular'})",
-        f"{cross:.1%}",
-    )
+    st.metric("Overall Cross-Media Reach", f"{cross:.1%}")
 
-    # Chart with y-axis title "Media reach"
+    # Chart: y-axis title "Media reach"
     chart_df = pd.DataFrame({"Channel": channels, "Media reach": r_eff})
     st.altair_chart(
         alt.Chart(chart_df)
@@ -114,22 +117,19 @@ if mode == MODE_LABELS[0]:
 
     with st.expander("Details"):
         details = edited.copy()
-        details["Reach (0–1) used"] = r_eff
-        details["Reach used %"] = [x * 100 for x in r_eff]
+        details["Reach (0–1)"] = r_eff
+        details["Reach %"] = [x * 100 for x in r_eff]
         st.dataframe(details, use_container_width=True)
 
-    if use_attentive and any(ch not in ADJ for ch in channels if ch.strip()):
-        st.warning("Some channel names are not in the internal adjustment table; factor 1.0 was used for those.")
-
 # =====================================================================
-# Mode 2: Overlap-aware (Sainsbury + monthly usage)
+# Mode 2: Overlap-aware (Sainsbury + monthly usage) — attention optional
 # =====================================================================
 else:
     st.subheader("Overlap-aware: Sainsbury + monthly usage matrix")
     st.write(
         "Enter **media reach** (%) for each selected channel. "
-        "If 'Attention-adjusted reach' is selected, reaches are multiplied internally by the channel's index. "
-        "The **monthly usage** matrix U(A) and U(A∩B) is editable at the end."
+        + ("Reaches will be multiplied by the channel's attention index. " if use_attentive else "")
+        + "The **monthly usage** matrix U(A) and U(A∩B) is editable at the end."
     )
 
     # 14-channel catalog (matches your matrix)
