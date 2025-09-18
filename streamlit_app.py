@@ -7,11 +7,13 @@ import altair as alt
 # Make sure `mindshare_lithuania_logo.jpg` is present in the same directory as this script
 st.set_page_config(page_title="Cross-Reach Calculator", page_icon="mindshare_lithuania_logo.jpg", layout="centered")
 
-# --- Header with logo aligned to title ---
+# --- Header with logo aligned to title (base64 so it always loads) ---
+with open("mindshare_lithuania_logo.jpg", "rb") as _f:
+    _data_uri = f"data:image/jpeg;base64,{b64encode(_f.read()).decode()}"
 st.markdown(
-    """
+    f"""
     <div style="display:flex; align-items:center; gap:12px; margin:0 0 8px 0;">
-        <img src="mindshare_lithuania_logo.jpg" style="height:40px; border-radius:8px;" />
+        <img src="{_data_uri}" style="height:40px; border-radius:8px;" />
         <h1 style="margin:0;">Cross-Reach Calculator</h1>
     </div>
     """,
