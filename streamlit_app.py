@@ -1,3 +1,4 @@
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -56,19 +57,33 @@ def apply_attention(channel, value01):
     """Multiply reach (0..1) by the channel's adjustment index (default 1.0)."""
     factor = ADJ.get(channel, 1.0)
     return float(np.clip(value01 * factor, 0.0, 1.0))
+    
+# ---- Sidebar chart color controls (optional) ----
+with st.sidebar.expander("Chart style"):
+    color_mode = st.radio("Bar color mode", ["Single", "Palette"], horizontal=True, key="chart_mode")
+    if color_mode == "Single":
+        bar_color = st.color_picker("Bar color", value="#9A3EFF", key="bar_color")
+    else:
+        # any Vega/Altair categorical scheme works
+        bar_scheme = st.selectbox("Palette", ["tableau10", "category10", "set2", "dark2", "pastel1"], index=0, key="bar_scheme")
 
-# Fixed-brand bar chart (no sidebar controls)
-def make_bar_chart(df, x_field, y_field, brand="#9A3EFF", height=320):
-    return (
+def make_bar_chart(df, x_field, y_field):
+    base = (
         alt.Chart(df)
-        .mark_bar(color=brand)
         .encode(
             x=alt.X(f"{x_field}:N", sort=None, title="Channel"),
             y=alt.Y(f"{y_field}:Q", axis=alt.Axis(format="%", title="Media reach")),
             tooltip=[alt.Tooltip(f"{x_field}:N"), alt.Tooltip(f"{y_field}:Q", format=".1%")],
         )
-        .properties(height=height)
+        .properties(height=320)
     )
+    if st.session_state.get("chart_mode") == "Palette":
+        return base.mark_bar().encode(
+            color=alt.Color(f"{x_field}:N", scale=alt.Scale(scheme=st.session_state.get("bar_scheme", "tableau10")), legend=None)
+        )
+    else:
+        return base.mark_bar(color=st.session_state.get("bar_color", "#9A3EFF"))
+    
 
 # =====================================================================
 # Mode 1: Independence (Sainsbury)
@@ -111,8 +126,10 @@ if mode == MODE_LABELS[0]:
         f"{cross:.1%}",
     )
 
+    # Chart with y-axis title "Media reach"
     chart_df = pd.DataFrame({"Channel": channels, "Media reach": r_eff})
     st.altair_chart(make_bar_chart(chart_df, "Channel", "Media reach"), use_container_width=True)
+
 
     with st.expander("Details"):
         details = edited.copy()
@@ -134,42 +151,58 @@ else:
         "The **monthly usage** matrix U(A) and U(A∩B) is editable at the end."
     )
 
+    # 14-channel catalog (matches your matrix)
     catalog = [
-        "Cinema","Direct mail","Influencers","Magazines","Newspapers","News portals",
-        "OOH","Podcasts","POS (Instore)","Radio","Search","Social media","TV","VOD",
+        "Cinema",
+        "Direct mail",
+        "Influencers",
+        "Magazines",
+        "Newspapers",
+        "News portals",
+        "OOH",
+        "Podcasts",
+        "POS (Instore)",
+        "Radio",
+        "Search",
+        "Social media",
+        "TV",
+        "VOD",
     ]
     chosen = st.multiselect("Channels to include", catalog, default=["TV", "Social media", "Radio"])
     if len(chosen) < 2:
         st.info("Select at least two channels to calculate.")
         st.stop()
 
-    # Default MONTHLY USAGE matrix (proportions 0..1)
+    # --- Default MONTHLY USAGE matrix (proportions 0..1) ---
     matrix_rows = [
-        [0.25, 0.14, 0.14, 0.14, 0.14, 0.20, 0.22, 0.14, 0.19, 0.22, 0.22, 0.22, 0.23, 0.20],
-        [0.16, 0.37, 0.24, 0.21, 0.23, 0.32, 0.38, 0.21, 0.36, 0.36, 0.35, 0.35, 0.38, 0.33],
-        [0.16, 0.24, 0.47, 0.20, 0.21, 0.42, 0.42, 0.27, 0.38, 0.43, 0.45, 0.47, 0.47, 0.44],
-        [0.14, 0.18, 0.18, 0.34, 0.26, 0.27, 0.28, 0.17, 0.27, 0.29, 0.29, 0.29, 0.31, 0.29],
-        [0.14, 0.20, 0.18, 0.26, 0.36, 0.29, 0.30, 0.17, 0.28, 0.31, 0.31, 0.30, 0.33, 0.29],
-        [0.22, 0.32, 0.42, 0.31, 0.33, 0.73, 0.62, 0.34, 0.57, 0.66, 0.71, 0.70, 0.71, 0.67],
-        [0.22, 0.33, 0.37, 0.28, 0.30, 0.55, 0.72, 0.31, 0.62, 0.61, 0.63, 0.61, 0.65, 0.59],
-        [0.16, 0.21, 0.27, 0.20, 0.19, 0.34, 0.36, 0.38, 0.32, 0.35, 0.37, 0.38, 0.37, 0.38],
-        [0.19, 0.32, 0.34, 0.27, 0.28, 0.50, 0.62, 0.29, 0.66, 0.55, 0.57, 0.56, 0.58, 0.54],
-        [0.22, 0.32, 0.38, 0.29, 0.31, 0.58, 0.61, 0.31, 0.55, 0.77, 0.67, 0.65, 0.70, 0.63],
-        [0.24, 0.35, 0.45, 0.33, 0.35, 0.71, 0.71, 0.37, 0.64, 0.75, 0.84, 0.81, 0.83, 0.77],
-        [0.24, 0.35, 0.47, 0.33, 0.34, 0.70, 0.69, 0.38, 0.63, 0.74, 0.81, 0.84, 0.81, 0.78],
-        [0.23, 0.33, 0.41, 0.31, 0.33, 0.63, 0.65, 0.32, 0.58, 0.70, 0.74, 0.72, 0.85, 0.68],
-        [0.23, 0.33, 0.44, 0.32, 0.33, 0.67, 0.67, 0.38, 0.61, 0.71, 0.77, 0.78, 0.77, 0.80],
+[0.25, 0.14, 0.14, 0.14, 0.14, 0.20, 0.22, 0.14, 0.19, 0.22, 0.22, 0.22, 0.23, 0.20],  # Cinema
+[0.16, 0.37, 0.24, 0.21, 0.23, 0.32, 0.38, 0.21, 0.36, 0.36, 0.35, 0.35, 0.38, 0.33],  # Direct mail
+[0.16, 0.24, 0.47, 0.20, 0.21, 0.42, 0.42, 0.27, 0.38, 0.43, 0.45, 0.47, 0.47, 0.44],  # Influencers
+[0.14, 0.18, 0.18, 0.34, 0.26, 0.27, 0.28, 0.17, 0.27, 0.29, 0.29, 0.29, 0.31, 0.29],  # Magazines
+[0.14, 0.20, 0.18, 0.26, 0.36, 0.29, 0.30, 0.17, 0.28, 0.31, 0.31, 0.30, 0.33, 0.29],  # Newspapers
+[0.22, 0.32, 0.42, 0.31, 0.33, 0.73, 0.62, 0.34, 0.57, 0.66, 0.71, 0.70, 0.71, 0.67],  # News portals
+[0.22, 0.33, 0.37, 0.28, 0.30, 0.55, 0.72, 0.31, 0.62, 0.61, 0.63, 0.61, 0.65, 0.59],  # OOH
+[0.16, 0.21, 0.27, 0.20, 0.19, 0.34, 0.36, 0.38, 0.32, 0.35, 0.37, 0.38, 0.37, 0.38],  # Podcasts
+[0.19, 0.32, 0.34, 0.27, 0.28, 0.50, 0.62, 0.29, 0.66, 0.55, 0.57, 0.56, 0.58, 0.54],  # POS (Instore)
+[0.22, 0.32, 0.38, 0.29, 0.31, 0.58, 0.61, 0.31, 0.55, 0.77, 0.67, 0.65, 0.70, 0.63],  # Radio
+[0.24, 0.35, 0.45, 0.33, 0.35, 0.71, 0.71, 0.37, 0.64, 0.75, 0.84, 0.81, 0.83, 0.77],  # Search
+[0.24, 0.35, 0.47, 0.33, 0.34, 0.70, 0.69, 0.38, 0.63, 0.74, 0.81, 0.84, 0.81, 0.78],  # Social media
+[0.23, 0.33, 0.41, 0.31, 0.33, 0.63, 0.65, 0.32, 0.58, 0.70, 0.74, 0.72, 0.85, 0.68],  # TV
+[0.23, 0.33, 0.44, 0.32, 0.33, 0.67, 0.67, 0.38, 0.61, 0.71, 0.77, 0.78, 0.77, 0.80],  # VOD
+
     ]
     default_usage_df = pd.DataFrame(matrix_rows, index=catalog, columns=catalog)
 
-    # Media reach inputs
+    # --- Media reach inputs ---
     st.write("**Media reach by channel** (% of population).")
     marg_df = pd.DataFrame({"Channel": chosen, "Reach %": [None] * len(chosen)})
     marg_edit = st.data_editor(
         marg_df,
         column_config={
             "Channel": st.column_config.TextColumn(disabled=True),
-            "Reach %": st.column_config.NumberColumn("Reach %", min_value=0.0, max_value=100.0, step=0.1, format="%.1f"),
+            "Reach %": st.column_config.NumberColumn(
+                "Reach %", min_value=0.0, max_value=100.0, step=0.1, format="%.1f"
+            ),
         },
         hide_index=True,
         use_container_width=True,
@@ -186,7 +219,7 @@ else:
     # Apply attention (internally) if selected
     R = {ch: apply_attention(ch, R_raw[ch]) for ch in chosen} if use_attentive else R_raw
 
-    # Monthly usage matrix (editable, % values)
+    # --- Monthly usage matrix (editable, % values shown) ---
     key_mat = "usage_matrix_df"
     if (
         key_mat not in st.session_state
@@ -211,14 +244,17 @@ else:
             v = 0.5 * (ab + ba) if len(both) == 2 else (both[0] if len(both) == 1 else None)
             U.loc[a, b] = U.loc[b, a] = v
 
-    # Validate
+    # Validate: R(A) <= U(A), and pairwise bounds
     for a in chosen:
         ua = U.loc[a, a]
         if ua is None or not (0 <= ua <= 1):
             st.error("Monthly usage U(A) (diagonal) must be 0–100%.")
             st.stop()
         if R[a] - ua > 1e-9:
-            st.error(f"{'Attentive ' if use_attentive else ''}reach for {a} ({R[a]:.2%}) cannot exceed monthly usage U({a}) ({ua:.2%}).")
+            st.error(
+                f"{'Attentive ' if use_attentive else ''}reach for {a} ({R[a]:.2%}) "
+                f"cannot exceed monthly usage U({a}) ({ua:.2%})."
+            )
             st.stop()
     for i, a in enumerate(chosen):
         for j, b in enumerate(chosen):
@@ -232,9 +268,10 @@ else:
                 st.error(f"U({a}∩{b}) must be ≤ min(U({a}), U({b})).")
                 st.stop()
 
-    # Campaign-level overlaps
+    # Convert usage → effective campaign pairwise via within-user reach r_i = R(A)/U(A)
     r = {a: (0.0 if U.loc[a, a] in (None, 0) else min(1.0, R[a] / U.loc[a, a])) for a in chosen}
-    P2 = pd.DataFrame(index=chosen, columns=chosen, dtype=float)
+
+    P2 = pd.DataFrame(index=chosen, columns=chosen, dtype=float)  # effective P(A∩B) for union
     for a in chosen:
         P2.loc[a, a] = R[a]
     for i, a in enumerate(chosen):
@@ -242,21 +279,22 @@ else:
             if j <= i:
                 continue
             uab = U.loc[a, b]
-            pab = float(uab * r[a] * r[b])
-            P2.loc[a, b] = P2.loc[b, a] = min(pab, R[a], R[b])
+            pab = float(uab * r[a] * r[b])  # ≈ campaign-level overlap
+            P2.loc[a, b] = P2.loc[b, a] = min(pab, R[a], R[b])  # clip to feasibility
 
-    # Bounds + Kirkwood triple
+    # Bounds + simple triple estimator (Kirkwood)
     chans = chosen[:]
     sum_R = sum(R[c] for c in chans)
     sum_pairs = sum(P2.loc[chans[i], chans[j]] for i in range(len(chans)) for j in range(i + 1, len(chans)))
-    lower_pair = max(max(R[c] for c in chans), sum_R - sum_pairs)
-    upper_simple = min(1.0, sum_R)
+
+    lower_pair = max(max(R[c] for c in chans), sum_R - sum_pairs)  # Bonferroni lower bound
+    upper_simple = min(1.0, sum_R)  # simple upper bound
 
     def est_triple(a, b, c):
         R1, R2, R3 = R[a], R[b], R[c]
         P_ab, P_ac, P_bc = P2.loc[a, b], P2.loc[a, c], P2.loc[b, c]
         denom = max(1e-12, R1 * R2 * R3)
-        t = (P_ab * P_ac * P_bc) / denom
+        t = (P_ab * P_ac * P_bc) / denom  # Kirkwood approx
         lower = max(0.0, (P_ab + P_ac + P_bc) - R1 - R2 - R3)
         upper = min(P_ab, P_ac, P_bc)
         return float(np.clip(t, lower, upper))
@@ -273,19 +311,29 @@ else:
     # Outputs
     c1, c2 = st.columns(2)
     with c1:
-        st.metric(f"Estimated cross-media reach ({'Attentive' if use_attentive else 'Regular'})", f"{est_union:.1%}")
+        st.metric(
+            f"Estimated cross-media reach ({'Attentive' if use_attentive else 'Regular'})",
+            f"{est_union:.1%}",
+        )
     with c2:
         st.caption(f"Bounds: LB≈{lower_pair:.1%}, UB≈{upper_simple:.1%}")
 
+    # Per-channel chart with y-axis title "Media reach"
     reach_df = pd.DataFrame({"Channel": chans, "Media reach": [R[c] for c in chans]})
-    st.altair_chart(make_bar_chart(reach_df, "Channel", "Media reach", height=280), use_container_width=True)
+    st.altair_chart(make_bar_chart(reach_df, "Channel", "Media reach"), use_container_width=True)
 
-    # Matrix editor & diagnostics
+    # Matrix editor (percent values)
     with st.expander("Math & inputs ▸ Monthly usage matrix U (edit if needed)"):
         st.markdown("Diagonal = U(A), off-diagonals = U(A∩B). Values are % of population.")
-        edited = st.data_editor(U_df_pct, use_container_width=True, num_rows="fixed", key="usage_matrix_editor_bottom")
+        edited = st.data_editor(
+            U_df_pct,
+            use_container_width=True,
+            num_rows="fixed",
+            key="usage_matrix_editor_bottom",
+        )
         st.session_state[key_mat] = edited
 
+        # Diagnostics table (includes adjustment; hides row numbers)
         diag = pd.DataFrame({
             "Channel": chans,
             "Adjustment": [ADJ.get(c, 1.0) for c in chans],
