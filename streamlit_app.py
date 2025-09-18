@@ -6,17 +6,7 @@ import altair as alt
 # -------------------- Page setup --------------------
 # Make sure `mindshare_lithuania_logo.jpg` is present in the same directory as this script
 st.set_page_config(page_title="Cross-Reach Calculator", page_icon="mindshare_lithuania_logo.jpg", layout="centered")
-
-# --- Header with logo instead of the emoji ---
-logo_col, title_col = st.columns([1, 8])
-with logo_col:
-    st.image("mindshare_lithuania_logo.jpg", use_container_width=False, width=44)
-with title_col:
-    st.markdown(
-        "<h1 style='margin:0;'>Cross-Reach Calculator</h1>",
-        unsafe_allow_html=True
-    )
-
+st.title("📈 Cross-Reach Calculator")
 
 # Small helper to render a gray notice box (instead of st.info)
 def gray_notice(message: str):
