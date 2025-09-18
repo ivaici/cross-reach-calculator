@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import altair as alt
+from base64 import b64encode  # ← added
 
 # -------------------- Page setup --------------------
 # Make sure `mindshare_lithuania_logo.jpg` is present in the same directory as this script
