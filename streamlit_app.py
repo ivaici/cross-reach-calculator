@@ -3,8 +3,26 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 
-st.set_page_config(page_title="Cross-Reach Calculator", page_icon="📈", layout="centered")
+# -------------------- Page setup --------------------
+# Make sure `mindshare_lithuania_logo.jpg` is present in the same directory as this script
+st.set_page_config(page_title="Cross-Reach Calculator", page_icon="mindshare_lithuania_logo.jpg", layout="centered")
 st.title("📈 Cross-Reach Calculator")
+
+# Small helper to render a gray notice box (instead of st.info)
+def gray_notice(message: str):
+    st.markdown(
+        f"""
+        <div style="
+            background-color:#F2F2F2;
+            padding:12px 16px;
+            border-radius:8px;
+            border:1px solid #e6e6e6;
+            font-size:0.95rem;
+            line-height:1.4;
+        ">{message}</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 # -------------------- Attention adjustment indexes (internal) --------------------
 ADJ = {
@@ -193,7 +211,7 @@ else:
     )
     R_raw = {ch: pct_to_unit(marg_edit.loc[i, "Reach %"]) for i, ch in enumerate(chosen)}
     if any(R_raw[ch] is None for ch in chosen):
-        st.info("Enter a **media reach (%)** for each selected channel to calculate results.")
+        gray_notice('Enter a <strong>media reach (%)</strong> for each selected channel to calculate results.')
         st.stop()
     if any(not (0 <= R_raw[ch] <= 1) for ch in chosen):
         st.error("Media reach values must be between 0 and 100%.")
