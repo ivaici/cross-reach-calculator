@@ -56,6 +56,33 @@ def apply_attention(channel, value01):
     """Multiply reach (0..1) by the channel's adjustment index (default 1.0)."""
     factor = ADJ.get(channel, 1.0)
     return float(np.clip(value01 * factor, 0.0, 1.0))
+    
+# ---- Sidebar chart color controls (optional) ----
+with st.sidebar.expander("Chart style"):
+    color_mode = st.radio("Bar color mode", ["Single", "Palette"], horizontal=True, key="chart_mode")
+    if color_mode == "Single":
+        bar_color = st.color_picker("Bar color", value="#9A3EFF", key="bar_color")
+    else:
+        # any Vega/Altair categorical scheme works
+        bar_scheme = st.selectbox("Palette", ["tableau10", "category10", "set2", "dark2", "pastel1"], index=0, key="bar_scheme")
+
+def make_bar_chart(df, x_field, y_field):
+    base = (
+        alt.Chart(df)
+        .encode(
+            x=alt.X(f"{x_field}:N", sort=None, title="Channel"),
+            y=alt.Y(f"{y_field}:Q", axis=alt.Axis(format="%", title="Media reach")),
+            tooltip=[alt.Tooltip(f"{x_field}:N"), alt.Tooltip(f"{y_field}:Q", format=".1%")],
+        )
+        .properties(height=320)
+    )
+    if st.session_state.get("chart_mode") == "Palette":
+        return base.mark_bar().encode(
+            color=alt.Color(f"{x_field}:N", scale=alt.Scale(scheme=st.session_state.get("bar_scheme", "tableau10")), legend=None)
+        )
+    else:
+        return base.mark_bar(color=st.session_state.get("bar_color", "#9A3EFF"))
+    
 
 # =====================================================================
 # Mode 1: Independence (Sainsbury)
@@ -100,17 +127,8 @@ if mode == MODE_LABELS[0]:
 
     # Chart with y-axis title "Media reach"
     chart_df = pd.DataFrame({"Channel": channels, "Media reach": r_eff})
-    st.altair_chart(
-        alt.Chart(chart_df)
-        .mark_bar()
-        .encode(
-            x=alt.X("Channel:N", sort=None, title="Channel"),
-            y=alt.Y("Media reach:Q", axis=alt.Axis(format="%", title="Media reach")),
-            tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Media reach:Q", format=".1%")],
-        )
-        .properties(height=320),
-        use_container_width=True,
-    )
+    st.altair_chart(make_bar_chart(chart_df, "Channel", "Media reach"), use_container_width=True)
+
 
     with st.expander("Details"):
         details = edited.copy()
@@ -301,17 +319,8 @@ else:
 
     # Per-channel chart with y-axis title "Media reach"
     reach_df = pd.DataFrame({"Channel": chans, "Media reach": [R[c] for c in chans]})
-    st.altair_chart(
-        alt.Chart(reach_df)
-        .mark_bar()
-        .encode(
-            x=alt.X("Channel:N", sort=None),
-            y=alt.Y("Media reach:Q", axis=alt.Axis(format="%", title="Media reach")),
-            tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Media reach:Q", format=".1%")],
-        )
-        .properties(height=280),
-        use_container_width=True,
-    )
+    st.altair_chart(make_bar_chart(reach_df, "Channel", "Media reach"), use_container_width=True)
+
 
     # Matrix editor (percent values)
     with st.expander("Math & inputs ▸ Monthly usage matrix U (edit if needed)"):
