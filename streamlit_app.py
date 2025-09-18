@@ -24,19 +24,23 @@ ADJ = {
     "VOD": 0.61,
 }
 
-# -------------------- Global reach basis & mode --------------------
-reach_basis = st.radio(
-    "Choose a reach basis",
-    ["Regular reach", "Attention-adjusted reach"],
-    horizontal=True,
-)
-use_attentive = (reach_basis == "Attention-adjusted reach")
-
+# -------------------- Mode first --------------------
 MODE_LABELS = [
     "Independence (Sainsbury)",
     "Overlap-aware (Sainsbury + monthly usage)",
 ]
 mode = st.radio("Choose a mode", MODE_LABELS)
+
+# Only show reach-basis switch in Overlap-aware mode
+use_attentive = False
+if mode == MODE_LABELS[1]:
+    reach_basis = st.radio(
+        "Choose a reach basis",
+        ["Regular reach", "Attention-adjusted reach"],
+        horizontal=True,
+        key="reach_basis_selector",
+    )
+    use_attentive = (reach_basis == "Attention-adjusted reach")
 
 # -------------------- helpers --------------------
 def pct_to_unit(x):
@@ -58,11 +62,11 @@ def apply_attention(channel, value01):
     return float(np.clip(value01 * factor, 0.0, 1.0))
 
 # =====================================================================
-# Mode 1: Independence (Sainsbury)
+# Mode 1: Independence (Sainsbury) — no attention option
 # =====================================================================
 if mode == MODE_LABELS[0]:
     st.subheader("Independence: Sainsbury formula")
-    st.caption("Cross reach = 1 − ∏(1 − Rᵢ). If 'Attention-adjusted reach' is selected, each Rᵢ is multiplied by its index internally.")
+    st.caption("Cross reach = 1 − ∏(1 − Rᵢ). Assumes channels are independent.")
 
     rows = st.sidebar.slider("Rows (channels)", 3, 30, 5, key="rows_ind")
     seed = [
@@ -90,15 +94,14 @@ if mode == MODE_LABELS[0]:
 
     channels = edited["Channel"].fillna("").astype(str).tolist()
     r_input = (edited["Reach %"].fillna(0) / 100.0).clip(0, 1).tolist()
-    r_eff = [apply_attention(ch, r) if use_attentive else r for ch, r in zip(channels, r_input)]
+
+    # No attention applied in Independence mode
+    r_eff = r_input[:]
 
     cross = 1 - np.prod([1 - x for x in r_eff])
-    st.metric(
-        f"Overall Cross-Media Reach ({'Attentive' if use_attentive else 'Regular'})",
-        f"{cross:.1%}",
-    )
+    st.metric("Overall Cross-Media Reach", f"{cross:.1%}")
 
-    # Chart with y-axis title "Media reach"
+    # Chart: y-axis title "Media reach"
     chart_df = pd.DataFrame({"Channel": channels, "Media reach": r_eff})
     st.altair_chart(
         alt.Chart(chart_df)
@@ -114,22 +117,19 @@ if mode == MODE_LABELS[0]:
 
     with st.expander("Details"):
         details = edited.copy()
-        details["Reach (0–1) used"] = r_eff
-        details["Reach used %"] = [x * 100 for x in r_eff]
+        details["Reach (0–1)"] = r_eff
+        details["Reach %"] = [x * 100 for x in r_eff]
         st.dataframe(details, use_container_width=True)
 
-    if use_attentive and any(ch not in ADJ for ch in channels if ch.strip()):
-        st.warning("Some channel names are not in the internal adjustment table; factor 1.0 was used for those.")
-
 # =====================================================================
-# Mode 2: Overlap-aware (Sainsbury + monthly usage)
+# Mode 2: Overlap-aware (Sainsbury + monthly usage) — attention optional
 # =====================================================================
 else:
     st.subheader("Overlap-aware: Sainsbury + monthly usage matrix")
     st.write(
         "Enter **media reach** (%) for each selected channel. "
-        "If 'Attention-adjusted reach' is selected, reaches are multiplied internally by the channel's index. "
-        "The **monthly usage** matrix U(A) and U(A∩B) is editable at the end."
+        + ("Reaches will be multiplied by the channel's attention index. " if use_attentive else "")
+        + "The **monthly usage** matrix U(A) and U(A∩B) is editable at the end."
     )
 
     # 14-channel catalog (matches your matrix)
@@ -156,21 +156,20 @@ else:
 
     # --- Default MONTHLY USAGE matrix (proportions 0..1) ---
     matrix_rows = [
-[0.25, 0.14, 0.14, 0.14, 0.14, 0.20, 0.22, 0.14, 0.19, 0.22, 0.22, 0.22, 0.23, 0.20],  # Cinema
-[0.16, 0.37, 0.24, 0.21, 0.23, 0.32, 0.38, 0.21, 0.36, 0.36, 0.35, 0.35, 0.38, 0.33],  # Direct mail
-[0.16, 0.24, 0.47, 0.20, 0.21, 0.42, 0.42, 0.27, 0.38, 0.43, 0.45, 0.47, 0.47, 0.44],  # Influencers
-[0.14, 0.18, 0.18, 0.34, 0.26, 0.27, 0.28, 0.17, 0.27, 0.29, 0.29, 0.29, 0.31, 0.29],  # Magazines
-[0.14, 0.20, 0.18, 0.26, 0.36, 0.29, 0.30, 0.17, 0.28, 0.31, 0.31, 0.30, 0.33, 0.29],  # Newspapers
-[0.22, 0.32, 0.42, 0.31, 0.33, 0.73, 0.62, 0.34, 0.57, 0.66, 0.71, 0.70, 0.71, 0.67],  # News portals
-[0.22, 0.33, 0.37, 0.28, 0.30, 0.55, 0.72, 0.31, 0.62, 0.61, 0.63, 0.61, 0.65, 0.59],  # OOH
-[0.16, 0.21, 0.27, 0.20, 0.19, 0.34, 0.36, 0.38, 0.32, 0.35, 0.37, 0.38, 0.37, 0.38],  # Podcasts
-[0.19, 0.32, 0.34, 0.27, 0.28, 0.50, 0.62, 0.29, 0.66, 0.55, 0.57, 0.56, 0.58, 0.54],  # POS (Instore)
-[0.22, 0.32, 0.38, 0.29, 0.31, 0.58, 0.61, 0.31, 0.55, 0.77, 0.67, 0.65, 0.70, 0.63],  # Radio
-[0.24, 0.35, 0.45, 0.33, 0.35, 0.71, 0.71, 0.37, 0.64, 0.75, 0.84, 0.81, 0.83, 0.77],  # Search
-[0.24, 0.35, 0.47, 0.33, 0.34, 0.70, 0.69, 0.38, 0.63, 0.74, 0.81, 0.84, 0.81, 0.78],  # Social media
-[0.23, 0.33, 0.41, 0.31, 0.33, 0.63, 0.65, 0.32, 0.58, 0.70, 0.74, 0.72, 0.85, 0.68],  # TV
-[0.23, 0.33, 0.44, 0.32, 0.33, 0.67, 0.67, 0.38, 0.61, 0.71, 0.77, 0.78, 0.77, 0.80],  # VOD
-
+        [0.25, 0.16, 0.16, 0.14, 0.14, 0.22, 0.22, 0.16, 0.19, 0.22, 0.24, 0.24, 0.23, 0.23],  # Cinema
+        [0.16, 0.41, 0.27, 0.21, 0.23, 0.36, 0.38, 0.24, 0.36, 0.36, 0.39, 0.39, 0.38, 0.38],  # Direct mail
+        [0.16, 0.27, 0.53, 0.20, 0.21, 0.47, 0.42, 0.30, 0.38, 0.43, 0.51, 0.53, 0.47, 0.50],  # Influencers
+        [0.14, 0.21, 0.20, 0.34, 0.26, 0.31, 0.28, 0.20, 0.27, 0.29, 0.33, 0.33, 0.31, 0.32],  # Magazines
+        [0.14, 0.23, 0.21, 0.26, 0.36, 0.33, 0.30, 0.19, 0.28, 0.31, 0.35, 0.34, 0.33, 0.33],  # Newspapers
+        [0.22, 0.36, 0.47, 0.31, 0.33, 0.82, 0.62, 0.38, 0.57, 0.66, 0.80, 0.79, 0.71, 0.76],  # News portals
+        [0.22, 0.38, 0.42, 0.28, 0.30, 0.62, 0.72, 0.36, 0.62, 0.61, 0.71, 0.69, 0.65, 0.67],  # OOH
+        [0.16, 0.24, 0.30, 0.20, 0.19, 0.38, 0.36, 0.43, 0.32, 0.35, 0.41, 0.43, 0.37, 0.43],  # Podcasts
+        [0.19, 0.36, 0.38, 0.27, 0.28, 0.57, 0.62, 0.32, 0.66, 0.55, 0.64, 0.63, 0.58, 0.61],  # POS (Instore)
+        [0.22, 0.36, 0.43, 0.29, 0.31, 0.66, 0.61, 0.35, 0.55, 0.77, 0.75, 0.74, 0.70, 0.71],  # Radio
+        [0.24, 0.39, 0.51, 0.33, 0.35, 0.80, 0.71, 0.41, 0.64, 0.75, 0.95, 0.91, 0.83, 0.87],  # Search
+        [0.24, 0.39, 0.53, 0.33, 0.34, 0.79, 0.69, 0.43, 0.63, 0.74, 0.91, 0.94, 0.81, 0.88],  # Social media
+        [0.23, 0.38, 0.47, 0.31, 0.33, 0.71, 0.65, 0.37, 0.58, 0.70, 0.83, 0.81, 0.85, 0.77],  # TV
+        [0.23, 0.38, 0.50, 0.32, 0.33, 0.76, 0.67, 0.43, 0.61, 0.71, 0.87, 0.88, 0.77, 0.90],  # VOD
     ]
     default_usage_df = pd.DataFrame(matrix_rows, index=catalog, columns=catalog)
 
