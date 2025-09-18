@@ -61,6 +61,19 @@ def apply_attention(channel, value01):
     factor = ADJ.get(channel, 1.0)
     return float(np.clip(value01 * factor, 0.0, 1.0))
 
+def bar_chart(df, x_field, y_field, height=320):
+    """Unified purple bar chart (#9A3EFF)."""
+    return (
+        alt.Chart(df)
+        .mark_bar(color="#9A3EFF")
+        .encode(
+            x=alt.X(f"{x_field}:N", sort=None, title="Channel"),
+            y=alt.Y(f"{y_field}:Q", axis=alt.Axis(format="%", title="Media reach")),
+            tooltip=[alt.Tooltip(f"{x_field}:N"), alt.Tooltip(f"{y_field}:Q", format=".1%")],
+        )
+        .properties(height=height)
+    )
+
 # =====================================================================
 # Mode 1: Independence (Sainsbury) — no attention option
 # =====================================================================
@@ -101,19 +114,9 @@ if mode == MODE_LABELS[0]:
     cross = 1 - np.prod([1 - x for x in r_eff])
     st.metric("Overall Cross-Media Reach", f"{cross:.1%}")
 
-    # Chart: y-axis title "Media reach"
+    # Chart: y-axis title "Media reach", fixed purple color
     chart_df = pd.DataFrame({"Channel": channels, "Media reach": r_eff})
-    st.altair_chart(
-        alt.Chart(chart_df)
-        .mark_bar()
-        .encode(
-            x=alt.X("Channel:N", sort=None, title="Channel"),
-            y=alt.Y("Media reach:Q", axis=alt.Axis(format="%", title="Media reach")),
-            tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Media reach:Q", format=".1%")],
-        )
-        .properties(height=320),
-        use_container_width=True,
-    )
+    st.altair_chart(bar_chart(chart_df, "Channel", "Media reach", height=320), use_container_width=True)
 
     with st.expander("Details"):
         details = edited.copy()
@@ -156,20 +159,20 @@ else:
 
     # --- Default MONTHLY USAGE matrix (proportions 0..1) ---
     matrix_rows = [
-        [0.25, 0.16, 0.16, 0.14, 0.14, 0.22, 0.22, 0.16, 0.19, 0.22, 0.24, 0.24, 0.23, 0.23],  # Cinema
-        [0.16, 0.41, 0.27, 0.21, 0.23, 0.36, 0.38, 0.24, 0.36, 0.36, 0.39, 0.39, 0.38, 0.38],  # Direct mail
-        [0.16, 0.27, 0.53, 0.20, 0.21, 0.47, 0.42, 0.30, 0.38, 0.43, 0.51, 0.53, 0.47, 0.50],  # Influencers
-        [0.14, 0.21, 0.20, 0.34, 0.26, 0.31, 0.28, 0.20, 0.27, 0.29, 0.33, 0.33, 0.31, 0.32],  # Magazines
-        [0.14, 0.23, 0.21, 0.26, 0.36, 0.33, 0.30, 0.19, 0.28, 0.31, 0.35, 0.34, 0.33, 0.33],  # Newspapers
-        [0.22, 0.36, 0.47, 0.31, 0.33, 0.82, 0.62, 0.38, 0.57, 0.66, 0.80, 0.79, 0.71, 0.76],  # News portals
-        [0.22, 0.38, 0.42, 0.28, 0.30, 0.62, 0.72, 0.36, 0.62, 0.61, 0.71, 0.69, 0.65, 0.67],  # OOH
-        [0.16, 0.24, 0.30, 0.20, 0.19, 0.38, 0.36, 0.43, 0.32, 0.35, 0.41, 0.43, 0.37, 0.43],  # Podcasts
-        [0.19, 0.36, 0.38, 0.27, 0.28, 0.57, 0.62, 0.32, 0.66, 0.55, 0.64, 0.63, 0.58, 0.61],  # POS (Instore)
-        [0.22, 0.36, 0.43, 0.29, 0.31, 0.66, 0.61, 0.35, 0.55, 0.77, 0.75, 0.74, 0.70, 0.71],  # Radio
-        [0.24, 0.39, 0.51, 0.33, 0.35, 0.80, 0.71, 0.41, 0.64, 0.75, 0.95, 0.91, 0.83, 0.87],  # Search
-        [0.24, 0.39, 0.53, 0.33, 0.34, 0.79, 0.69, 0.43, 0.63, 0.74, 0.91, 0.94, 0.81, 0.88],  # Social media
-        [0.23, 0.38, 0.47, 0.31, 0.33, 0.71, 0.65, 0.37, 0.58, 0.70, 0.83, 0.81, 0.85, 0.77],  # TV
-        [0.23, 0.38, 0.50, 0.32, 0.33, 0.76, 0.67, 0.43, 0.61, 0.71, 0.87, 0.88, 0.77, 0.90],  # VOD
+        [0.25, 0.14, 0.14, 0.14, 0.14, 0.20, 0.22, 0.14, 0.19, 0.22, 0.22, 0.22, 0.23, 0.20],  # Cinema
+        [0.16, 0.37, 0.24, 0.21, 0.23, 0.32, 0.38, 0.21, 0.36, 0.36, 0.35, 0.35, 0.38, 0.33],  # Direct mail
+        [0.16, 0.24, 0.47, 0.20, 0.21, 0.42, 0.42, 0.27, 0.38, 0.43, 0.45, 0.47, 0.47, 0.44],  # Influencers
+        [0.14, 0.18, 0.18, 0.34, 0.26, 0.27, 0.28, 0.17, 0.27, 0.29, 0.29, 0.29, 0.31, 0.29],  # Magazines
+        [0.14, 0.20, 0.18, 0.26, 0.36, 0.29, 0.30, 0.17, 0.28, 0.31, 0.31, 0.30, 0.33, 0.29],  # Newspapers
+        [0.22, 0.32, 0.42, 0.31, 0.33, 0.73, 0.62, 0.34, 0.57, 0.66, 0.71, 0.70, 0.71, 0.67],  # News portals
+        [0.22, 0.33, 0.37, 0.28, 0.30, 0.55, 0.72, 0.31, 0.62, 0.61, 0.63, 0.61, 0.65, 0.59],  # OOH
+        [0.16, 0.21, 0.27, 0.20, 0.19, 0.34, 0.36, 0.38, 0.32, 0.35, 0.37, 0.38, 0.37, 0.38],  # Podcasts
+        [0.19, 0.32, 0.34, 0.27, 0.28, 0.50, 0.62, 0.29, 0.66, 0.55, 0.57, 0.56, 0.58, 0.54],  # POS (Instore)
+        [0.22, 0.32, 0.38, 0.29, 0.31, 0.58, 0.61, 0.31, 0.55, 0.77, 0.67, 0.65, 0.70, 0.63],  # Radio
+        [0.24, 0.35, 0.45, 0.33, 0.35, 0.71, 0.71, 0.37, 0.64, 0.75, 0.84, 0.81, 0.83, 0.77],  # Search
+        [0.24, 0.35, 0.47, 0.33, 0.34, 0.70, 0.69, 0.38, 0.63, 0.74, 0.81, 0.84, 0.81, 0.78],  # Social media
+        [0.23, 0.33, 0.41, 0.31, 0.33, 0.63, 0.65, 0.32, 0.58, 0.70, 0.74, 0.72, 0.85, 0.68],  # TV
+        [0.23, 0.33, 0.44, 0.32, 0.33, 0.67, 0.67, 0.38, 0.61, 0.71, 0.77, 0.78, 0.77, 0.80],  # VOD
     ]
     default_usage_df = pd.DataFrame(matrix_rows, index=catalog, columns=catalog)
 
@@ -298,19 +301,9 @@ else:
     with c2:
         st.caption(f"Bounds: LB≈{lower_pair:.1%}, UB≈{upper_simple:.1%}")
 
-    # Per-channel chart with y-axis title "Media reach"
+    # Per-channel chart with fixed purple color
     reach_df = pd.DataFrame({"Channel": chans, "Media reach": [R[c] for c in chans]})
-    st.altair_chart(
-        alt.Chart(reach_df)
-        .mark_bar()
-        .encode(
-            x=alt.X("Channel:N", sort=None),
-            y=alt.Y("Media reach:Q", axis=alt.Axis(format="%", title="Media reach")),
-            tooltip=[alt.Tooltip("Channel:N"), alt.Tooltip("Media reach:Q", format=".1%")],
-        )
-        .properties(height=280),
-        use_container_width=True,
-    )
+    st.altair_chart(bar_chart(reach_df, "Channel", "Media reach", height=280), use_container_width=True)
 
     # Matrix editor (percent values)
     with st.expander("Math & inputs ▸ Monthly usage matrix U (edit if needed)"):
