@@ -299,32 +299,32 @@ else:
     est_att, lb_att, ub_att, P2_att = compute_union(chans, R_attentive, U)
 
     # --- Regular block: title above, short metric label next to chart ---
-st.markdown("**Cross-media reach (Regular)**")
-reg_left, reg_right = st.columns([1, 3])  # tweak ratios if you want
-with reg_left:
-    st.metric("Reach", f"{est_reg:.1%}")   # short label (no truncation)
-    st.caption(f"Bounds: LB≈{lb_reg:.1%}, UB≈{ub_reg:.1%}")
-with reg_right:
-    reach_df_reg = pd.DataFrame({"Channel": chans, "Media reach": [R_regular[c] for c in chans]})
-    st.altair_chart(
-        bar_chart(reach_df_reg, "Channel", "Media reach", height=280, color="#9A3EFF"),
-        use_container_width=True,
-    )
+    st.markdown("**Cross-media reach (Regular)**")
+    reg_left, reg_right = st.columns([1, 3])  # tweak ratios if you want
+    with reg_left:
+        st.metric("Reach", f"{est_reg:.1%}")   # short label (no truncation)
+        st.caption(f"Bounds: LB≈{lb_reg:.1%}, UB≈{ub_reg:.1%}")
+    with reg_right:
+        reach_df_reg = pd.DataFrame({"Channel": chans, "Media reach": [R_regular[c] for c in chans]})
+        st.altair_chart(
+            bar_chart(reach_df_reg, "Channel", "Media reach", height=280, color="#9A3EFF"),
+            use_container_width=True,
+        )
 
-st.divider()
+    st.divider()
 
-# --- Attentive block: title above, short metric label next to chart ---
-st.markdown("**Cross-media reach (Attentive)**")
-att_left, att_right = st.columns([1, 3])
-with att_left:
-    st.metric("Reach", f"{est_att:.1%}")   # short label (no truncation)
-    st.caption(f"Bounds: LB≈{lb_att:.1%}, UB≈{ub_att:.1%}")
-with att_right:
-    reach_df_att = pd.DataFrame({"Channel": chans, "Media reach": [R_attentive[c] for c in chans]})
-    st.altair_chart(
-        bar_chart(reach_df_att, "Channel", "Media reach", height=280, color="#FEC8FF"),
-        use_container_width=True,
-    )
+    # --- Attentive block: title above, short metric label next to chart ---
+    st.markdown("**Cross-media reach (Attentive)**")
+    att_left, att_right = st.columns([1, 3])
+    with att_left:
+        st.metric("Reach", f"{est_att:.1%}")   # short label (no truncation)
+        st.caption(f"Bounds: LB≈{lb_att:.1%}, UB≈{ub_att:.1%}")
+    with att_right:
+        reach_df_att = pd.DataFrame({"Channel": chans, "Media reach": [R_attentive[c] for c in chans]})
+        st.altair_chart(
+            bar_chart(reach_df_att, "Channel", "Media reach", height=280, color="#FEC8FF"),
+            use_container_width=True,
+        )
 
     # --- Matrix editor (percent values) + diagnostics ---
     with st.expander("Math & inputs ▸ Monthly usage matrix U (edit if needed)"):
