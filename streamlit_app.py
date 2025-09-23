@@ -49,7 +49,7 @@ ADJ = {
 MODE_LABELS = [
     "Independence (Sainsbury)",
     "Overlap-aware (Sainsbury + monthly usage)",
-    "Overlap-aware (Digital pairs matrix)",  # NEW
+    "Overlap-aware (Digital pairs matrix) STILL WORKING",  # NEW
 ]
 mode = st.radio("Choose a mode", MODE_LABELS)
 
