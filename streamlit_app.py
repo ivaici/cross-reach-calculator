@@ -2,13 +2,14 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import altair as alt
-from base64 import b64encode  # ← ensures logo always loads
+from base64 import b64encode
 import re
 
 # -------------------- Page setup --------------------
-st.set_page_config(page_title="Cross-Reach Calculator", page_icon="mindshare_lithuania_logo.jpg", layout="centered")
+st.set_page_config(page_title="Cross-Reach Calculator",
+                   page_icon="mindshare_lithuania_logo.jpg",
+                   layout="centered")
 
-# --- Header with logo aligned to title (base64 so it always loads) ---
 with open("mindshare_lithuania_logo.jpg", "rb") as _f:
     _data_uri = f"data:image/jpeg;base64,{b64encode(_f.read()).decode()}"
 st.markdown(
@@ -21,7 +22,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Small helper to render a gray notice box (instead of st.info)
 def gray_notice(message: str):
     st.markdown(
         f"""
@@ -55,7 +55,6 @@ mode = st.radio("Choose a mode", MODE_LABELS)
 
 # -------------------- helpers --------------------
 def pct_to_unit(x):
-    """Accepts '0.84', '0,84', 84 -> returns 0.84 (proportion 0..1)."""
     if x is None or x == "":
         return None
     try:
@@ -109,11 +108,6 @@ for alias, canonical in _ALIASES.items():
     _DIGITAL_CATEGORY_NORM[_norm(alias)] = DIGITAL_CATEGORY.get(canonical, "—")
 
 def attention_factor_for_channel(ch: str) -> float:
-    """
-    1) If channel matches ADJ directly (e.g., 'TV', 'Radio') → use it (Mode 2).
-    2) Else map digital label to a category (e.g., 'YouTube' → 'VOD') and use ADJ[category] (Mode 3).
-    3) Else 1.0.
-    """
     if ch in ADJ:
         return ADJ[ch]
     cat = _DIGITAL_CATEGORY_NORM.get(_norm(ch))
@@ -121,13 +115,7 @@ def attention_factor_for_channel(ch: str) -> float:
         return ADJ[cat]
     return 1.0
 
-def apply_attention(channel, value01):
-    """Multiply reach (0..1) by the appropriate adjustment index."""
-    factor = attention_factor_for_channel(channel)
-    return float(np.clip(value01 * factor, 0.0, 1.0))
-
 def bar_chart(df, x_field, y_field, height=320, color="#9A3EFF"):
-    """Unified bar chart with configurable color and auto height."""
     auto_height = max(height, 36 * max(1, len(df)))
     return (
         alt.Chart(df)
@@ -175,18 +163,16 @@ def compute_union(chans, R_dict, U_matrix):
 
 @st.cache_data
 def load_digital_pairs_matrix(path: str = "digital_pairs_matrix.csv") -> pd.DataFrame:
-    # Read European-style CSV: semicolon separator, comma decimals
     df = pd.read_csv(path, sep=";", decimal=",", index_col=0, encoding="utf-8")
     df.columns = [str(c).strip() for c in df.columns]
     df.index = [str(i).strip() for i in df.index]
     maxv = float(df.max().max())
     if maxv <= 1.5:
         df = df * 100.0
-    df = df.clip(lower=0, upper=100)
-    return df
+    return df.clip(lower=0, upper=100)
 
 # =====================================================================
-# Mode 1: Independence (Sainsbury) — no attention option
+# Mode 1
 # =====================================================================
 if mode == MODE_LABELS[0]:
     st.subheader("Independence: Sainsbury formula")
@@ -199,8 +185,8 @@ if mode == MODE_LABELS[0]:
         {"Channel": "Magazines", "Reach %": 15.0},
     ]
     if len(seed) < rows:
-        seed += [{"Channel": "", "Reach %": None} for _ in range(rows - len(seed))]
-    df = pd.DataFrame(seed[:rows])
+        seed += [{"Channel": "", "Reach %": 0.0} for _ in range(rows - len(seed))]  # default 0.0 (float)
+    df = pd.DataFrame(seed[:rows]).astype({"Reach %": float})
 
     edited = st.data_editor(
         df,
@@ -215,7 +201,7 @@ if mode == MODE_LABELS[0]:
     )
 
     channels = edited["Channel"].fillna("").astype(str).tolist()
-    r_input = (edited["Reach %"].fillna(0) / 100.0).clip(0, 1).tolist()
+    r_input = (edited["Reach %"].fillna(0.0).astype(float) / 100.0).clip(0, 1).tolist()
 
     cross = 1 - np.prod([1 - x for x in r_input])
     st.metric("Overall Cross-Media Reach", f"{cross:.1%}")
@@ -230,13 +216,13 @@ if mode == MODE_LABELS[0]:
         st.dataframe(details, use_container_width=True)
 
 # =====================================================================
-# Mode 2: Overlap-aware (Sainsbury + monthly usage) — show Regular & Attentive
+# Mode 2
 # =====================================================================
 elif mode == MODE_LABELS[1]:
     st.subheader("Overlap-aware: Sainsbury + monthly usage matrix")
     st.write(
         "Enter **media reach** (%) for each selected channel. "
-        "Results will be calculated two ways: **Regular** (as entered) and **Attentive** (after applying attention indexes). "
+        "Results are shown for **Regular** and **Attentive** (after applying attention indexes). "
         "The **monthly usage** matrix U(A) and U(A∩B) is editable at the end."
     )
 
@@ -251,34 +237,31 @@ elif mode == MODE_LABELS[1]:
 
     # Default MONTHLY USAGE matrix (proportions 0..1)
     matrix_rows = [
-        [0.25, 0.14, 0.14, 0.14, 0.14, 0.20, 0.22, 0.14, 0.19, 0.22, 0.22, 0.22, 0.23, 0.20],  # Cinema
-        [0.16, 0.37, 0.24, 0.21, 0.23, 0.32, 0.38, 0.21, 0.36, 0.36, 0.35, 0.35, 0.38, 0.33],  # Direct mail
-        [0.16, 0.24, 0.47, 0.20, 0.21, 0.42, 0.42, 0.27, 0.38, 0.43, 0.45, 0.47, 0.47, 0.44],  # Influencers
-        [0.14, 0.18, 0.18, 0.34, 0.26, 0.27, 0.28, 0.17, 0.27, 0.29, 0.29, 0.29, 0.31, 0.29],  # Magazines
-        [0.14, 0.20, 0.18, 0.26, 0.36, 0.29, 0.30, 0.17, 0.28, 0.31, 0.31, 0.30, 0.33, 0.29],  # Newspapers
-        [0.22, 0.32, 0.42, 0.31, 0.33, 0.73, 0.62, 0.34, 0.57, 0.66, 0.71, 0.70, 0.71, 0.67],  # News portals
-        [0.22, 0.33, 0.37, 0.28, 0.30, 0.55, 0.72, 0.31, 0.62, 0.61, 0.63, 0.61, 0.65, 0.59],  # OOH
-        [0.16, 0.21, 0.27, 0.20, 0.19, 0.34, 0.36, 0.38, 0.32, 0.35, 0.37, 0.38, 0.37, 0.38],  # Podcasts
-        [0.19, 0.32, 0.34, 0.27, 0.28, 0.50, 0.62, 0.29, 0.66, 0.55, 0.57, 0.56, 0.58, 0.54],  # POS (Instore)
-        [0.22, 0.32, 0.38, 0.29, 0.31, 0.58, 0.61, 0.31, 0.55, 0.77, 0.67, 0.65, 0.70, 0.63],  # Radio
-        [0.24, 0.35, 0.45, 0.33, 0.35, 0.71, 0.71, 0.37, 0.64, 0.75, 0.84, 0.81, 0.83, 0.77],  # Search
-        [0.24, 0.35, 0.47, 0.33, 0.34, 0.70, 0.69, 0.38, 0.63, 0.74, 0.81, 0.84, 0.81, 0.78],  # Social media
-        [0.23, 0.33, 0.41, 0.31, 0.33, 0.63, 0.65, 0.32, 0.58, 0.70, 0.74, 0.72, 0.85, 0.68],  # TV
-        [0.23, 0.33, 0.44, 0.32, 0.33, 0.67, 0.67, 0.38, 0.61, 0.71, 0.77, 0.78, 0.77, 0.80],  # VOD
+        [0.25, 0.14, 0.14, 0.14, 0.14, 0.20, 0.22, 0.14, 0.19, 0.22, 0.22, 0.22, 0.23, 0.20],
+        [0.16, 0.37, 0.24, 0.21, 0.23, 0.32, 0.38, 0.21, 0.36, 0.36, 0.35, 0.35, 0.38, 0.33],
+        [0.16, 0.24, 0.47, 0.20, 0.21, 0.42, 0.42, 0.27, 0.38, 0.43, 0.45, 0.47, 0.47, 0.44],
+        [0.14, 0.18, 0.18, 0.34, 0.26, 0.27, 0.28, 0.17, 0.27, 0.29, 0.29, 0.29, 0.31, 0.29],
+        [0.14, 0.20, 0.18, 0.26, 0.36, 0.29, 0.30, 0.17, 0.28, 0.31, 0.31, 0.30, 0.33, 0.29],
+        [0.22, 0.32, 0.42, 0.31, 0.33, 0.73, 0.62, 0.34, 0.57, 0.66, 0.71, 0.70, 0.71, 0.67],
+        [0.22, 0.33, 0.37, 0.28, 0.30, 0.55, 0.72, 0.31, 0.62, 0.61, 0.63, 0.61, 0.65, 0.59],
+        [0.16, 0.21, 0.27, 0.20, 0.19, 0.34, 0.36, 0.38, 0.32, 0.35, 0.37, 0.38, 0.37, 0.38],
+        [0.19, 0.32, 0.34, 0.27, 0.28, 0.50, 0.62, 0.29, 0.66, 0.55, 0.57, 0.56, 0.58, 0.54],
+        [0.22, 0.32, 0.38, 0.29, 0.31, 0.58, 0.61, 0.31, 0.55, 0.77, 0.67, 0.65, 0.70, 0.63],
+        [0.24, 0.35, 0.45, 0.33, 0.35, 0.71, 0.71, 0.37, 0.64, 0.75, 0.84, 0.81, 0.83, 0.77],
+        [0.24, 0.35, 0.47, 0.33, 0.34, 0.70, 0.69, 0.38, 0.63, 0.74, 0.81, 0.84, 0.81, 0.78],
+        [0.23, 0.33, 0.41, 0.31, 0.33, 0.63, 0.65, 0.32, 0.58, 0.70, 0.74, 0.72, 0.85, 0.68],
+        [0.23, 0.33, 0.44, 0.32, 0.33, 0.67, 0.67, 0.38, 0.61, 0.71, 0.77, 0.78, 0.77, 0.80],
     ]
     default_usage_df = pd.DataFrame(matrix_rows, index=catalog, columns=catalog)
 
-    # -------------------- Media reach inputs --------------------
+    # ---------- media reach inputs (stable float dtype & state) ----------
     if "reach_values" not in st.session_state:
-        st.session_state["reach_values"] = {}
+        st.session_state["reach_values"] = {}  # channel -> float percent
 
-    marg_df = pd.DataFrame({
-        "Channel": chosen,
-        "Reach %": [st.session_state["reach_values"].get(ch) for ch in chosen],
-    })
+    init_reach = [float(st.session_state["reach_values"].get(ch, 0.0)) for ch in chosen]
+    marg_df = pd.DataFrame({"Channel": chosen, "Reach %": init_reach}).astype({"Reach %": float})
 
     editor_key = "media_reach_editor__" + "|".join(chosen)
-
     marg_edit = st.data_editor(
         marg_df,
         column_config={
@@ -291,10 +274,12 @@ elif mode == MODE_LABELS[1]:
         key=editor_key,
     )
 
+    # write back edited values (floats) once per rerun
     for i, ch in enumerate(chosen):
-        st.session_state["reach_values"][ch] = marg_edit.loc[i, "Reach %"]
+        val = marg_edit.loc[i, "Reach %"]
+        st.session_state["reach_values"][ch] = 0.0 if pd.isna(val) else float(val)
 
-    R_raw = {ch: pct_to_unit(marg_edit.loc[i, "Reach %"]) for i, ch in enumerate(chosen)}
+    R_raw = {ch: pct_to_unit(st.session_state["reach_values"][ch]) for ch in chosen}
     if any(R_raw[ch] is None for ch in chosen):
         gray_notice('Enter a <strong>media reach (%)</strong> for each selected channel to calculate results.')
         st.stop()
@@ -304,11 +289,9 @@ elif mode == MODE_LABELS[1]:
 
     # --- Monthly usage matrix (editable, % values shown) ---
     key_mat = "usage_matrix_df"
-    if (
-        key_mat not in st.session_state
+    if (key_mat not in st.session_state
         or list(st.session_state[key_mat].index) != chosen
-        or list(st.session_state[key_mat].columns) != chosen
-    ):
+        or list(st.session_state[key_mat].columns) != chosen):
         st.session_state[key_mat] = (default_usage_df.loc[chosen, chosen] * 100.0).round(1)
 
     U_df_pct = st.session_state[key_mat].copy()
@@ -327,7 +310,7 @@ elif mode == MODE_LABELS[1]:
             v = 0.5 * (ab + ba) if len(both) == 2 else (both[0] if len(both) == 1 else None)
             U.loc[a, b] = U.loc[b, a] = v
 
-    # --- Validation (Regular; Attentive will be ≤ Regular) + auto-clip notice ---
+    # Validation + auto-clip notice
     clipped = []
     for a in chosen:
         ua = U.loc[a, a]
@@ -337,9 +320,8 @@ elif mode == MODE_LABELS[1]:
         if R_raw[a] - ua > 1e-9:
             clipped.append((a, R_raw[a], ua))
 
-    # --- Build both reach dictionaries (with auto-clip to U(A)) ---
     R_regular = {a: min(R_raw[a], U.loc[a, a]) for a in chosen}
-    R_attentive = {ch: apply_attention(ch, R_regular[ch]) for ch in chosen}
+    R_attentive = {ch: min(R_regular[ch] * ADJ.get(ch, 1.0), U.loc[ch, ch]) for ch in chosen}
 
     if clipped:
         msg = "Some inputs exceeded monthly usage and were clipped:<br>" + "<br>".join(
@@ -347,12 +329,10 @@ elif mode == MODE_LABELS[1]:
         )
         gray_notice(msg)
 
-    # --- Compute both scenarios ---
     chans = chosen[:]
     est_reg, lb_reg, ub_reg, P2_reg = compute_union(chans, R_regular, U)
     est_att, lb_att, ub_att, P2_att = compute_union(chans, R_attentive, U)
 
-    # --- Regular block ---
     st.markdown("**Cross-media reach (Regular)**")
     reg_left, reg_right = st.columns([1, 3])
     with reg_left:
@@ -360,11 +340,11 @@ elif mode == MODE_LABELS[1]:
         st.caption(f"Bounds: LB≈{lb_reg:.1%}, UB≈{ub_reg:.1%}")
     with reg_right:
         reach_df_reg = pd.DataFrame({"Channel": chans, "Media reach": [R_regular[c] for c in chans]})
-        st.altair_chart(bar_chart(reach_df_reg, "Channel", "Media reach", height=280, color="#9A3EFF"), use_container_width=True)
+        st.altair_chart(bar_chart(reach_df_reg, "Channel", "Media reach", height=280, color="#9A3EFF"),
+                        use_container_width=True)
 
     st.divider()
 
-    # --- Attentive block ---
     st.markdown("**Cross-media reach (Attentive)**")
     att_left, att_right = st.columns([1, 3])
     with att_left:
@@ -372,11 +352,10 @@ elif mode == MODE_LABELS[1]:
         st.caption(f"Bounds: LB≈{lb_att:.1%}, UB≈{ub_att:.1%}")
     with att_right:
         reach_df_att = pd.DataFrame({"Channel": chans, "Media reach": [R_attentive[c] for c in chans]})
-        st.altair_chart(bar_chart(reach_df_att, "Channel", "Media reach", height=280, color="#FEC8FF"), use_container_width=True)
+        st.altair_chart(bar_chart(reach_df_att, "Channel", "Media reach", height=280, color="#FEC8FF"),
+                        use_container_width=True)
 
-    # --- Matrix editor + diagnostics ---
     with st.expander("Math & inputs ▸ Monthly usage matrix U (edit if needed)"):
-        st.markdown("Diagonal = U(A), off-diagonals = U(A∩B). Values are % of population.")
         edited = st.data_editor(
             U_df_pct,
             use_container_width=True,
@@ -387,7 +366,7 @@ elif mode == MODE_LABELS[1]:
 
         diag = pd.DataFrame({
             "Channel": chans,
-            "Adjustment": [attention_factor_for_channel(c) for c in chans],
+            "Adjustment": [ADJ.get(c, 1.0) for c in chans],
             "Reach % (input)": [st.session_state["reach_values"].get(c) for c in chans],
             "Reach % (Regular)": [R_regular[c] * 100 for c in chans],
             "Reach % (Attentive)": [R_attentive[c] * 100 for c in chans],
@@ -404,15 +383,14 @@ elif mode == MODE_LABELS[1]:
             st.dataframe(P2_att.applymap(lambda v: None if v is None else round(v * 100, 2)))
 
 # =====================================================================
-# Mode 3: Overlap-aware (Digital pairs matrix) — category-based attention
+# Mode 3: Digital pairs matrix (with editable Attention idx)
 # =====================================================================
 elif mode == MODE_LABELS[2]:
     st.subheader("Overlap-aware: Digital pairs matrix")
     st.write(
         "Pick digital channels below and enter **media reach** (%) for each. "
-        "We’ll compute cross-media reach two ways: **Regular** (as entered) and **Attentive** (after applying "
-        "**category** attention factors). "
-        "The matrix uses diagonal as **U(A)** and off-diagonals as **U(A∩B)**, all as % of population."
+        "We compute **Regular** (as entered) and **Attentive** (after applying an **Attention idx**). "
+        "Defaults for Attention idx come from the category mapping, but you can override them below or in the Math section."
     )
 
     try:
@@ -428,15 +406,23 @@ elif mode == MODE_LABELS[2]:
         gray_notice("Select at least <strong>two</strong> digital channels.")
         st.stop()
 
+    # --- state for reach and attention overrides ---
     if "reach_values_digital" not in st.session_state:
         st.session_state["reach_values_digital"] = {}
+    if "attention_overrides" not in st.session_state:
+        st.session_state["attention_overrides"] = {}  # channel -> float (0..1)
+
+    # build editable table with stable float dtype
+    base_att = [attention_factor_for_channel(ch) for ch in chosen]
+    att_init = [float(st.session_state["attention_overrides"].get(ch, base_att[i])) for i, ch in enumerate(chosen)]
+    reach_init = [float(st.session_state["reach_values_digital"].get(ch, 0.0)) for ch in chosen]
 
     marg_df = pd.DataFrame({
         "Channel": chosen,
         "Category": [_DIGITAL_CATEGORY_NORM.get(_norm(ch), "—") for ch in chosen],
-        "Attention idx": [attention_factor_for_channel(ch) for ch in chosen],
-        "Reach %": [st.session_state["reach_values_digital"].get(ch) for ch in chosen],
-    })
+        "Attention idx": att_init,
+        "Reach %": reach_init,
+    }).astype({"Attention idx": float, "Reach %": float})
 
     editor_key = "media_reach_editor_digital__" + "|".join(chosen)
     marg_edit = st.data_editor(
@@ -444,7 +430,8 @@ elif mode == MODE_LABELS[2]:
         column_config={
             "Channel": st.column_config.TextColumn(disabled=True),
             "Category": st.column_config.TextColumn(disabled=True),
-            "Attention idx": st.column_config.NumberColumn(disabled=True, format="%.2f"),
+            # now EDITABLE:
+            "Attention idx": st.column_config.NumberColumn("Attention idx", min_value=0.0, max_value=1.0, step=0.01, format="%.2f"),
             "Reach %": st.column_config.NumberColumn("Reach %", min_value=0.0, max_value=100.0, step=0.1, format="%.1f"),
         },
         num_rows="fixed",
@@ -453,10 +440,19 @@ elif mode == MODE_LABELS[2]:
         key=editor_key,
     )
 
+    # write back edits to state
+    att_idx = {}
     for i, ch in enumerate(chosen):
-        st.session_state["reach_values_digital"][ch] = marg_edit.loc[i, "Reach %"]
+        r_val = marg_edit.loc[i, "Reach %"]
+        a_val = marg_edit.loc[i, "Attention idx"]
+        st.session_state["reach_values_digital"][ch] = 0.0 if pd.isna(r_val) else float(r_val)
+        # store override only if different from default (keeps state tidy)
+        base = base_att[i]
+        use_val = base if pd.isna(a_val) else float(a_val)
+        att_idx[ch] = use_val
+        st.session_state["attention_overrides"][ch] = use_val
 
-    R_raw = {ch: pct_to_unit(marg_edit.loc[i, "Reach %"]) for i, ch in enumerate(chosen)}
+    R_raw = {ch: pct_to_unit(st.session_state["reach_values_digital"][ch]) for ch in chosen}
     if any(R_raw[ch] is None for ch in chosen):
         gray_notice('Enter a <strong>media reach (%)</strong> for each selected channel.')
         st.stop()
@@ -465,7 +461,7 @@ elif mode == MODE_LABELS[2]:
         st.stop()
 
     U_df_pct = digital_pct.loc[chosen, chosen].copy()
-    U_df_pct_display = U_df_pct.round(1)  # tidy display (no long decimals)
+    U_df_pct_display = U_df_pct.round(1)
     U = (U_df_pct / 100.0).astype(float)
 
     # Auto-clip to U(A)
@@ -478,7 +474,7 @@ elif mode == MODE_LABELS[2]:
         if R_raw[a] - ua > 1e-9:
             clipped.append((a, R_raw[a], ua))
 
-    # Symmetrize off-diagonals (safety)
+    # Symmetrize off-diagonals
     for i, a in enumerate(chosen):
         for j, b in enumerate(chosen):
             if j <= i:
@@ -487,7 +483,8 @@ elif mode == MODE_LABELS[2]:
             U.loc[a, b] = U.loc[b, a] = v
 
     R_regular = {a: min(R_raw[a], U.loc[a, a]) for a in chosen}
-    R_attentive = {ch: float(np.clip(apply_attention(ch, R_regular[ch]), 0.0, U.loc[ch, ch])) for ch in chosen}
+    # use editable attention factors and clip to U(A)
+    R_attentive = {ch: float(np.clip(R_regular[ch] * att_idx[ch], 0.0, U.loc[ch, ch])) for ch in chosen}
 
     if clipped:
         msg = "Some inputs exceeded monthly usage and were clipped:<br>" + "<br>".join(
@@ -506,7 +503,8 @@ elif mode == MODE_LABELS[2]:
         st.caption(f"Bounds: LB≈{lb_reg:.1%}, UB≈{ub_reg:.1%}")
     with reg_right:
         reach_df_reg = pd.DataFrame({"Channel": chans, "Media reach": [R_regular[c] for c in chans]})
-        st.altair_chart(bar_chart(reach_df_reg, "Channel", "Media reach", height=280, color="#9A3EFF"), use_container_width=True)
+        st.altair_chart(bar_chart(reach_df_reg, "Channel", "Media reach", height=280, color="#9A3EFF"),
+                        use_container_width=True)
 
     st.divider()
 
@@ -517,17 +515,43 @@ elif mode == MODE_LABELS[2]:
         st.caption(f"Bounds: LB≈{lb_att:.1%}, UB≈{ub_att:.1%}")
     with att_right:
         reach_df_att = pd.DataFrame({"Channel": chans, "Media reach": [R_attentive[c] for c in chans]})
-        st.altair_chart(bar_chart(reach_df_att, "Channel", "Media reach", height=280, color="#FEC8FF"), use_container_width=True)
+        st.altair_chart(bar_chart(reach_df_att, "Channel", "Media reach", height=280, color="#FEC8FF"),
+                        use_container_width=True)
 
     with st.expander("Math & inputs ▸ Digital U matrix (read-only source)"):
         st.dataframe(U_df_pct_display, use_container_width=True)
+
+        # allow tweaking Attention idx here too (mirrors the main table)
+        att_df = pd.DataFrame({
+            "Channel": chans,
+            "Category": [_DIGITAL_CATEGORY_NORM.get(_norm(c), "—") for c in chans],
+            "Attention idx": [att_idx[c] for c in chans],
+        }).astype({"Attention idx": float})
+        att_edit = st.data_editor(
+            att_df,
+            column_config={
+                "Channel": st.column_config.TextColumn(disabled=True),
+                "Category": st.column_config.TextColumn(disabled=True),
+                "Attention idx": st.column_config.NumberColumn(min_value=0.0, max_value=1.0, step=0.01, format="%.2f"),
+            },
+            num_rows="fixed",
+            hide_index=True,
+            key="attention_editor_bottom",
+            use_container_width=True,
+        )
+        # persist edits back to state and recompute live
+        for i, ch in enumerate(chans):
+            new_val = att_edit.loc[i, "Attention idx"]
+            if not pd.isna(new_val):
+                st.session_state["attention_overrides"][ch] = float(new_val)
+
         diag = pd.DataFrame({
             "Channel": chans,
             "Category": [_DIGITAL_CATEGORY_NORM.get(_norm(c), "—") for c in chans],
-            "Attention idx": [attention_factor_for_channel(c) for c in chans],
-            "Reach % (input)": [R_regular[c]*100 for c in chans],
-            "Reach % (Attentive)": [R_attentive[c]*100 for c in chans],
-            "U(A) % (monthly users)": [U.loc[c, c]*100 for c in chans],
+            "Attention idx (used)": [st.session_state["attention_overrides"][c] for c in chans],
+            "Reach % (Regular)": [R_regular[c] * 100 for c in chans],
+            "Reach % (Attentive)": [R_attentive[c] * 100 for c in chans],
+            "U(A) % (monthly users)": [U.loc[c, c] * 100 for c in chans],
         })
         st.markdown("**Diagnostics (per channel)**")
         st.dataframe(diag, use_container_width=True, hide_index=True)
