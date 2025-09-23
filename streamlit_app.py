@@ -185,7 +185,7 @@ if mode == MODE_LABELS[0]:
         {"Channel": "Magazines", "Reach %": 15.0},
     ]
     if len(seed) < rows:
-        seed += [{"Channel": "", "Reach %": 0.0} for _ in range(rows - len(seed))]  # default 0.0 (float)
+        seed += [{"Channel": "", "Reach %": 0.0} for _ in range(rows - len(seed))]
     df = pd.DataFrame(seed[:rows]).astype({"Reach %": float})
 
     edited = st.data_editor(
@@ -235,7 +235,6 @@ elif mode == MODE_LABELS[1]:
         st.info("Select at least two channels to calculate.")
         st.stop()
 
-    # Default MONTHLY USAGE matrix (proportions 0..1)
     matrix_rows = [
         [0.25, 0.14, 0.14, 0.14, 0.14, 0.20, 0.22, 0.14, 0.19, 0.22, 0.22, 0.22, 0.23, 0.20],
         [0.16, 0.37, 0.24, 0.21, 0.23, 0.32, 0.38, 0.21, 0.36, 0.36, 0.35, 0.35, 0.38, 0.33],
@@ -254,9 +253,8 @@ elif mode == MODE_LABELS[1]:
     ]
     default_usage_df = pd.DataFrame(matrix_rows, index=catalog, columns=catalog)
 
-    # ---------- media reach inputs (stable float dtype & state) ----------
     if "reach_values" not in st.session_state:
-        st.session_state["reach_values"] = {}  # channel -> float percent
+        st.session_state["reach_values"] = {}
 
     init_reach = [float(st.session_state["reach_values"].get(ch, 0.0)) for ch in chosen]
     marg_df = pd.DataFrame({"Channel": chosen, "Reach %": init_reach}).astype({"Reach %": float})
@@ -274,7 +272,6 @@ elif mode == MODE_LABELS[1]:
         key=editor_key,
     )
 
-    # write back edited values (floats) once per rerun
     for i, ch in enumerate(chosen):
         val = marg_edit.loc[i, "Reach %"]
         st.session_state["reach_values"][ch] = 0.0 if pd.isna(val) else float(val)
@@ -287,7 +284,6 @@ elif mode == MODE_LABELS[1]:
         st.error("Media reach values must be between 0 and 100%.")
         st.stop()
 
-    # --- Monthly usage matrix (editable, % values shown) ---
     key_mat = "usage_matrix_df"
     if (key_mat not in st.session_state
         or list(st.session_state[key_mat].index) != chosen
@@ -310,7 +306,6 @@ elif mode == MODE_LABELS[1]:
             v = 0.5 * (ab + ba) if len(both) == 2 else (both[0] if len(both) == 1 else None)
             U.loc[a, b] = U.loc[b, a] = v
 
-    # Validation + auto-clip notice
     clipped = []
     for a in chosen:
         ua = U.loc[a, a]
@@ -356,6 +351,7 @@ elif mode == MODE_LABELS[1]:
                         use_container_width=True)
 
     with st.expander("Math & inputs ▸ Monthly usage matrix U (edit if needed)"):
+        st.markdown("Diagonal = U(A), off-diagonals = U(A∩B). Values are % of population.")
         edited = st.data_editor(
             U_df_pct,
             use_container_width=True,
@@ -383,14 +379,14 @@ elif mode == MODE_LABELS[1]:
             st.dataframe(P2_att.applymap(lambda v: None if v is None else round(v * 100, 2)))
 
 # =====================================================================
-# Mode 3: Digital pairs matrix (with editable Attention idx)
+# Mode 3: Digital pairs matrix (Attention idx only in Math part)
 # =====================================================================
 elif mode == MODE_LABELS[2]:
     st.subheader("Overlap-aware: Digital pairs matrix")
     st.write(
         "Pick digital channels below and enter **media reach** (%) for each. "
         "We compute **Regular** (as entered) and **Attentive** (after applying an **Attention idx**). "
-        "Defaults for Attention idx come from the category mapping, but you can override them below or in the Math section."
+        "Defaults come from the category mapping; edit Attention only in the Math section below."
     )
 
     try:
@@ -410,19 +406,15 @@ elif mode == MODE_LABELS[2]:
     if "reach_values_digital" not in st.session_state:
         st.session_state["reach_values_digital"] = {}
     if "attention_overrides" not in st.session_state:
-        st.session_state["attention_overrides"] = {}  # channel -> float (0..1)
+        st.session_state["attention_overrides"] = {}
 
-    # build editable table with stable float dtype
-    base_att = [attention_factor_for_channel(ch) for ch in chosen]
-    att_init = [float(st.session_state["attention_overrides"].get(ch, base_att[i])) for i, ch in enumerate(chosen)]
+    # main editable table WITHOUT attention column
     reach_init = [float(st.session_state["reach_values_digital"].get(ch, 0.0)) for ch in chosen]
-
     marg_df = pd.DataFrame({
         "Channel": chosen,
         "Category": [_DIGITAL_CATEGORY_NORM.get(_norm(ch), "—") for ch in chosen],
-        "Attention idx": att_init,
         "Reach %": reach_init,
-    }).astype({"Attention idx": float, "Reach %": float})
+    }).astype({"Reach %": float})
 
     editor_key = "media_reach_editor_digital__" + "|".join(chosen)
     marg_edit = st.data_editor(
@@ -430,8 +422,6 @@ elif mode == MODE_LABELS[2]:
         column_config={
             "Channel": st.column_config.TextColumn(disabled=True),
             "Category": st.column_config.TextColumn(disabled=True),
-            # now EDITABLE:
-            "Attention idx": st.column_config.NumberColumn("Attention idx", min_value=0.0, max_value=1.0, step=0.01, format="%.2f"),
             "Reach %": st.column_config.NumberColumn("Reach %", min_value=0.0, max_value=100.0, step=0.1, format="%.1f"),
         },
         num_rows="fixed",
@@ -440,17 +430,15 @@ elif mode == MODE_LABELS[2]:
         key=editor_key,
     )
 
-    # write back edits to state
-    att_idx = {}
+    # write back reach edits
     for i, ch in enumerate(chosen):
         r_val = marg_edit.loc[i, "Reach %"]
-        a_val = marg_edit.loc[i, "Attention idx"]
         st.session_state["reach_values_digital"][ch] = 0.0 if pd.isna(r_val) else float(r_val)
-        # store override only if different from default (keeps state tidy)
-        base = base_att[i]
-        use_val = base if pd.isna(a_val) else float(a_val)
-        att_idx[ch] = use_val
-        st.session_state["attention_overrides"][ch] = use_val
+
+    # load current attention values (defaults if no override set yet)
+    att_idx = {}
+    for ch in chosen:
+        att_idx[ch] = float(st.session_state["attention_overrides"].get(ch, attention_factor_for_channel(ch)))
 
     R_raw = {ch: pct_to_unit(st.session_state["reach_values_digital"][ch]) for ch in chosen}
     if any(R_raw[ch] is None for ch in chosen):
@@ -461,7 +449,7 @@ elif mode == MODE_LABELS[2]:
         st.stop()
 
     U_df_pct = digital_pct.loc[chosen, chosen].copy()
-    U_df_pct_display = U_df_pct.round(1)
+    U_df_pct_display = U_df_pct.round(1)          # tidy display
     U = (U_df_pct / 100.0).astype(float)
 
     # Auto-clip to U(A)
@@ -483,7 +471,6 @@ elif mode == MODE_LABELS[2]:
             U.loc[a, b] = U.loc[b, a] = v
 
     R_regular = {a: min(R_raw[a], U.loc[a, a]) for a in chosen}
-    # use editable attention factors and clip to U(A)
     R_attentive = {ch: float(np.clip(R_regular[ch] * att_idx[ch], 0.0, U.loc[ch, ch])) for ch in chosen}
 
     if clipped:
@@ -518,10 +505,10 @@ elif mode == MODE_LABELS[2]:
         st.altair_chart(bar_chart(reach_df_att, "Channel", "Media reach", height=280, color="#FEC8FF"),
                         use_container_width=True)
 
-    with st.expander("Math & inputs ▸ Digital U matrix (read-only source)"):
+    with st.expander("Math & inputs ▸ Digital U matrix (read-only source) & Attention idx"):
         st.dataframe(U_df_pct_display, use_container_width=True)
 
-        # allow tweaking Attention idx here too (mirrors the main table)
+        # Editable Attention here only
         att_df = pd.DataFrame({
             "Channel": chans,
             "Category": [_DIGITAL_CATEGORY_NORM.get(_norm(c), "—") for c in chans],
@@ -539,7 +526,7 @@ elif mode == MODE_LABELS[2]:
             key="attention_editor_bottom",
             use_container_width=True,
         )
-        # persist edits back to state and recompute live
+        # Persist edits so next rerun uses them
         for i, ch in enumerate(chans):
             new_val = att_edit.loc[i, "Attention idx"]
             if not pd.isna(new_val):
@@ -548,7 +535,7 @@ elif mode == MODE_LABELS[2]:
         diag = pd.DataFrame({
             "Channel": chans,
             "Category": [_DIGITAL_CATEGORY_NORM.get(_norm(c), "—") for c in chans],
-            "Attention idx (used)": [st.session_state["attention_overrides"][c] for c in chans],
+            "Attention idx (used)": [st.session_state["attention_overrides"].get(c, attention_factor_for_channel(c)) for c in chans],
             "Reach % (Regular)": [R_regular[c] * 100 for c in chans],
             "Reach % (Attentive)": [R_attentive[c] * 100 for c in chans],
             "U(A) % (monthly users)": [U.loc[c, c] * 100 for c in chans],
