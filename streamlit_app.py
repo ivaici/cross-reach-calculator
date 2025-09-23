@@ -160,7 +160,7 @@ def load_digital_pairs_matrix(path: str = "digital_pairs_matrix.csv") -> pd.Data
 # =====================================================================
 # Mode 1: Independence (Sainsbury) — no attention option
 # =====================================================================
-if mode == MODE_LABELS[0]]:
+if mode == MODE_LABELS[0]:
     st.subheader("Independence: Sainsbury formula")
     st.caption("Cross reach = 1 − ∏(1 − Rᵢ). Assumes channels are independent.")
 
