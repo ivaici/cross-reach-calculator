@@ -146,21 +146,25 @@ def attention_factor_for_channel(ch: str) -> float:
 
 @st.cache_data
 def load_digital_pairs_matrix(path: str = "digital_pairs_matrix.csv") -> pd.DataFrame:
-    import io, re
-    txt = open(path, "r", encoding="utf-8").read()
-    txt = re.sub(r"\s*;\s*", ",", txt)
-    txt = re.sub(r"\s*,\s*", ",", txt)
-    txt = re.sub(r"(?<=\d),(?=\d)", ".", txt)
-    df = pd.read_csv(io.StringIO(txt), index_col=0)
+    import pandas as pd
+    # Read European-style CSV: semicolon separator, comma decimals
+    df = pd.read_csv(path, sep=";", decimal=",", index_col=0, encoding="utf-8")
+    # Strip whitespace
     df.columns = [str(c).strip() for c in df.columns]
     df.index = [str(i).strip() for i in df.index]
-    df = df.apply(pd.to_numeric, errors="coerce").clip(lower=0, upper=100)
+    # Autodetect scale: if max ≤ 1.5 we assume 0..1 proportions and convert to percent
+    maxv = float(df.max().max())
+    if maxv <= 1.5:
+        df = df * 100.0
+    # Safety: clip to [0, 100]
+    df = df.clip(lower=0, upper=100)
     return df
+
 
 # =====================================================================
 # Mode 1: Independence (Sainsbury) — no attention option
 # =====================================================================
-if mode == MODE_LABELS[0]:
+if mode == MODE_LABELS[0]]:
     st.subheader("Independence: Sainsbury formula")
     st.caption("Cross reach = 1 − ∏(1 − Rᵢ). Assumes channels are independent.")
 
