@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 from base64 import b64encode  # ← ensures logo always loads
+import re
 
 # -------------------- Page setup --------------------
 # Make sure `mindshare_lithuania_logo.jpg` is present in the same directory as this script
@@ -49,7 +50,7 @@ ADJ = {
 MODE_LABELS = [
     "Independence (Sainsbury)",
     "Overlap-aware (Sainsbury + monthly usage)",
-    "Overlap-aware (Digital pairs matrix) STILL WORKING",  # NEW
+    "Overlap-aware (Digital pairs matrix)",  # NEW
 ]
 mode = st.radio("Choose a mode", MODE_LABELS)
 
@@ -69,7 +70,7 @@ def unit_to_pct(x):
 
 def apply_attention(channel, value01):
     """Multiply reach (0..1) by the channel's adjustment index (default 1.0)."""
-    factor = ADJ.get(channel, 1.0)
+    factor = attention_factor_for_channel(channel)  # ← use robust lookup below
     return float(np.clip(value01 * factor, 0.0, 1.0))
 
 def bar_chart(df, x_field, y_field, height=320, color="#9A3EFF"):
@@ -121,27 +122,53 @@ def compute_union(chans, R_dict, U_matrix):
 
 # -------------------- Digital categories & matrix loader (for Mode 3) --------------------
 DIGITAL_CATEGORY = {
+    # News portals
     "BNS": "News portals", "ELTA": "News portals", "15min.lt": "News portals", "delfi.lt": "News portals",
     "diena.lt": "News portals", "lnk.lt": "News portals", "lrytas.lt": "News portals", "lrt.lt": "News portals",
     "tv3.lt": "News portals", "vz.lt": "News portals", "zmones.lt": "News portals",
+    # Other sites / Search
     "gmail.com": "Other sites", "google.lt": "Search",
+    # Social media
     "BeReal": "Social media", "Discord": "Social media", "Facebook": "Social media", "Instagram": "Social media",
     "Linkedin": "Social media", "Pinterest": "Social media", "Reddit": "Social media", "Snapchat": "Social media",
     "Telegram": "Social media", "Threads": "Social media", "Tik ToK": "Social media", "Tinder": "Social media",
     "VK": "Social media", "X": "Social media",
+    # Podcasts
     "BasketNews": "Podcasts", "Bazaras? Bazaras!": "Podcasts", "Čia tik tarp mūsų": "Podcasts",
     "Kitokie pasikalbėjimai": "Podcasts", "Klajumo kanalas": "Podcasts", "Nepatogūs klausimai": "Podcasts",
     "Nesiaukite": "Podcasts", "Penktas kėlinys": "Podcasts", "PIN (Pradėk iš naujo)": "Podcasts",
     "Pralaužk vieną šaltą": "Podcasts", "Proto Industrija": "Podcasts", "Proto pemza": "Podcasts",
     "Savaitės rifas": "Podcasts", "Tapk geresniu": "Podcasts", "Vėl tie patys": "Podcasts",
+    # VOD (incl. music/tv streaming)
     "15min Klausyk": "VOD", "3Play / TV3 Play": "VOD", "Amazon Prime": "VOD", "Apple TV": "VOD",
     "Delfi TV": "VOD", "Disney+": "VOD", "Go3": "VOD", "HBO": "VOD", "Youtube": "VOD", "Laisvės TV": "VOD",
     "lnk.lt / LNK Go": "VOD", "Lrytas TV": "VOD", "LRT Epika": "VOD", "LRT Mediateka": "VOD",
     "Netflix": "VOD", "Spotify": "VOD", "Telia Play": "VOD", "Twitch": "VOD", "Žmonės Cinema": "VOD",
 }
 
+# --- Robust name normalization so CSV labels like "YouTube" still match "Youtube" in the mapping ---
+def _norm(s: str) -> str:
+    return re.sub(r"\s+", " ", str(s).strip().lower())
+
+# Precompute a normalized lookup
+_DIGITAL_CATEGORY_NORM = {_norm(k): v for k, v in DIGITAL_CATEGORY.items()}
+
+# A few friendly aliases (optional; helps with common variants)
+_ALIASES = {
+    "youtube": "Youtube",
+    "you tube": "Youtube",
+    "tik tok": "Tik ToK",
+    "tiktok": "Tik ToK",
+    "linkedin": "Linkedin",
+    "x (twitter)": "X",
+    "tv3 play": "3Play / TV3 Play",
+    "lnk go": "lnk.lt / LNK Go",
+}
+for alias, canonical in _ALIASES.items():
+    _DIGITAL_CATEGORY_NORM[_norm(alias)] = DIGITAL_CATEGORY.get(canonical, "—")
+
 def attention_factor_for_channel(ch: str) -> float:
-    cat = DIGITAL_CATEGORY.get(ch)
+    cat = _DIGITAL_CATEGORY_NORM.get(_norm(ch))
     return ADJ.get(cat, 1.0)
 
 @st.cache_data
@@ -160,11 +187,10 @@ def load_digital_pairs_matrix(path: str = "digital_pairs_matrix.csv") -> pd.Data
     df = df.clip(lower=0, upper=100)
     return df
 
-
 # =====================================================================
 # Mode 1: Independence (Sainsbury) — no attention option
 # =====================================================================
-if mode == MODE_LABELS[0]:
+if mode == MODE_LABELS[0]]:
     st.subheader("Independence: Sainsbury formula")
     st.caption("Cross reach = 1 − ∏(1 − Rᵢ). Assumes channels are independent.")
 
@@ -417,7 +443,7 @@ elif mode == MODE_LABELS[2]:
 
     marg_df = pd.DataFrame({
         "Channel": chosen,
-        "Category": [DIGITAL_CATEGORY.get(ch, "—") for ch in chosen],
+        "Category": [ _DIGITAL_CATEGORY_NORM.get(_norm(ch), "—") for ch in chosen],
         "Attention idx": [attention_factor_for_channel(ch) for ch in chosen],
         "Reach %": [st.session_state["reach_values_digital"].get(ch) for ch in chosen],
     })
@@ -449,6 +475,8 @@ elif mode == MODE_LABELS[2]:
         st.stop()
 
     U_df_pct = digital_pct.loc[chosen, chosen].copy()
+    # Round the displayed digital matrix without showing long decimals
+    U_df_pct_display = U_df_pct.round(1)
     U = (U_df_pct / 100.0).astype(float)
 
     # Auto-clip to U(A) instead of erroring
@@ -503,10 +531,11 @@ elif mode == MODE_LABELS[2]:
         st.altair_chart(bar_chart(reach_df_att, "Channel", "Media reach", height=280, color="#FEC8FF"), use_container_width=True)
 
     with st.expander("Math & inputs ▸ Digital U matrix (read-only source)"):
-        st.dataframe(U_df_pct, use_container_width=True)
+        # show a cleanly rounded matrix (1 decimal)
+        st.dataframe(U_df_pct_display, use_container_width=True)
         diag = pd.DataFrame({
             "Channel": chans,
-            "Category": [DIGITAL_CATEGORY.get(c, "—") for c in chans],
+            "Category": [_DIGITAL_CATEGORY_NORM.get(_norm(c), "—") for c in chans],
             "Attention idx": [attention_factor_for_channel(c) for c in chans],
             "Reach % (input)": [R_regular[c]*100 for c in chans],
             "Reach % (Attentive)": [R_attentive[c]*100 for c in chans],
