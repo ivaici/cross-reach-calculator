@@ -62,8 +62,8 @@ mode = st.radio("Choose a mode", MODE_LABELS)
 # -------------------- helpers --------------------
 def pct_to_unit(x):
     """
-    Scalar helper for user-entered % values.
-    Interprets 12.3 → 0.123; if user accidentally enters 0.123 it keeps 0.123 (rare in UI).
+    STRICT: interpret user-entered numbers as percent in [0, 100].
+    0.3 -> 0.003 (0.3%), 30 -> 0.30 (30%).
     """
     if x is None or x == "":
         return None
@@ -71,9 +71,11 @@ def pct_to_unit(x):
         x = float(str(x).replace(",", "."))
     except Exception:
         return None
-    # If user typed 0.5 intending 0.5%, our UI guidance will steer them to 0.5 (= 0.5%).
-    # We keep backward compatibility: values > 1 are assumed to be %.
-    return x / 100.0 if x > 1 else x
+    # Reject out-of-range early (you also have UI min/max, but double safety)
+    if x < 0 or x > 100:
+        return None
+    return x / 100.0
+
 
 def unit_to_pct(x):
     return None if x is None else x * 100.0
