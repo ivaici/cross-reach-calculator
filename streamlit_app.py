@@ -1,26 +1,32 @@
+import os
+import re
 import numpy as np
 import pandas as pd
 import streamlit as st
 import altair as alt
 from base64 import b64encode
-import re
 
 # -------------------- Page setup --------------------
 st.set_page_config(page_title="Cross-Reach Calculator",
                    page_icon="mindshare_lithuania_logo.jpg",
                    layout="centered")
 
-with open("mindshare_lithuania_logo.jpg", "rb") as _f:
-    _data_uri = f"data:image/jpeg;base64,{b64encode(_f.read()).decode()}"
-st.markdown(
-    f"""
-    <div style="display:flex; align-items:center; gap:12px; margin:0 0 8px 0;">
-        <img src="{_data_uri}" style="height:40px; border-radius:8px;" />
-        <h1 style="margin:0;">Cross-Reach Calculator</h1>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+# logo is optional; don't crash if missing
+if os.path.exists("mindshare_lithuania_logo.jpg"):
+    with open("mindshare_lithuania_logo.jpg", "rb") as _f:
+        _data_uri = f"data:image/jpeg;base64,{b64encode(_f.read()).decode()}"
+    st.markdown(
+        f"""
+        <div style="display:flex; align-items:center; gap:12px; margin:0 0 8px 0;">
+            <img src="{_data_uri}" style="height:40px; border-radius:8px;" />
+            <h1 style="margin:0;">Cross-Reach Calculator</h1>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+else:
+    st.markdown("<h1>Cross-Reach Calculator</h1>", unsafe_allow_html=True)
+
 
 def gray_notice(message: str):
     st.markdown(
@@ -55,16 +61,26 @@ mode = st.radio("Choose a mode", MODE_LABELS)
 
 # -------------------- helpers --------------------
 def pct_to_unit(x):
+    """
+    Scalar helper for user-entered % values.
+    Interprets 12.3 → 0.123; if user accidentally enters 0.123 it keeps 0.123 (rare in UI).
+    """
     if x is None or x == "":
         return None
     try:
         x = float(str(x).replace(",", "."))
     except Exception:
         return None
+    # If user typed 0.5 intending 0.5%, our UI guidance will steer them to 0.5 (= 0.5%).
+    # We keep backward compatibility: values > 1 are assumed to be %.
     return x / 100.0 if x > 1 else x
 
 def unit_to_pct(x):
     return None if x is None else x * 100.0
+
+def to_unit_df_from_pct(df_pct: pd.DataFrame) -> pd.DataFrame:
+    """Vectorized, unambiguous conversion of a % matrix to 0–1 (float)."""
+    return (df_pct.astype(float) / 100.0)
 
 # --- Digital mapping (used only when needed) ---
 DIGITAL_CATEGORY = {
@@ -129,47 +145,93 @@ def bar_chart(df, x_field, y_field, height=320, color="#9A3EFF"):
     )
 
 def compute_union(chans, R_dict, U_matrix):
-    r = {a: (0.0 if U_matrix.loc[a, a] in (None, 0) else min(1.0, R_dict[a] / U_matrix.loc[a, a])) for a in chans}
+    """
+    chans: list of str
+    R_dict: dict channel -> marginal reach (0..1), already clipped to U(a,a)
+    U_matrix: DataFrame (0..1) with U(a,a)=monthly users, U(a,b)=monthly users of intersection
+    """
+    # Work with a safe numeric copy (no NaNs/None)
+    U = U_matrix.copy().astype(float).fillna(0.0)
+
+    # Effective fraction within monthly users for each channel
+    r = {}
+    for a in chans:
+        ua = float(U.loc[a, a]) if (a in U.index and a in U.columns) else 0.0
+        r[a] = 0.0 if ua <= 0 else min(1.0, float(R_dict[a]) / ua)
+
+    # Pairwise effective overlap P2 (in absolute population fraction)
     P2 = pd.DataFrame(index=chans, columns=chans, dtype=float)
     for a in chans:
-        P2.loc[a, a] = R_dict[a]
+        P2.loc[a, a] = float(R_dict[a])
+
     for i, a in enumerate(chans):
         for j, b in enumerate(chans):
             if j <= i:
                 continue
-            uab = U_matrix.loc[a, b]
-            pab = float(uab * r[a] * r[b])
-            P2.loc[a, b] = P2.loc[b, a] = min(pab, R_dict[a], R_dict[b])
-    sum_R = sum(R_dict[c] for c in chans)
-    sum_pairs = sum(P2.loc[chans[i], chans[j]] for i in range(len(chans)) for j in range(i + 1, len(chans)))
+            uab = float(U.loc[a, b])
+            pab = uab * r[a] * r[b]  # scaled intersection
+            # Cap by marginals
+            pab = min(pab, float(R_dict[a]), float(R_dict[b]))
+            P2.loc[a, b] = P2.loc[b, a] = float(pab)
+
+    sum_R = float(sum(R_dict[c] for c in chans))
+    sum_pairs = float(sum(P2.loc[chans[i], chans[j]] for i in range(len(chans)) for j in range(i + 1, len(chans))))
     lower_pair = max(max(R_dict[c] for c in chans), sum_R - sum_pairs)
     upper_simple = min(1.0, sum_R)
+
     def est_triple(a, b, c):
-        R1, R2, R3 = R_dict[a], R_dict[b], R_dict[c]
-        P_ab, P_ac, P_bc = P2.loc[a, b], P2.loc[a, c], P2.loc[b, c]
+        R1, R2, R3 = float(R_dict[a]), float(R_dict[b]), float(R_dict[c])
+        P_ab, P_ac, P_bc = float(P2.loc[a, b]), float(P2.loc[a, c]), float(P2.loc[b, c])
         denom = max(1e-12, R1 * R2 * R3)
+        # multiplicative guess bounded by Bonferroni-like limits
         t = (P_ab * P_ac * P_bc) / denom
         lower = max(0.0, (P_ab + P_ac + P_bc) - R1 - R2 - R3)
         upper = min(P_ab, P_ac, P_bc)
         return float(np.clip(t, lower, upper))
+
     triple_sum = 0.0
     if len(chans) >= 3:
         for i in range(len(chans)):
             for j in range(i + 1, len(chans)):
                 for k in range(j + 1, len(chans)):
                     triple_sum += est_triple(chans[i], chans[j], chans[k])
+
     est_union = float(np.clip(sum_R - sum_pairs + triple_sum, lower_pair, upper_simple))
     return est_union, lower_pair, upper_simple, P2
 
+# ---------- CSV loader with cache that refreshes on file update ----------
 @st.cache_data
-def load_digital_pairs_matrix(path: str = "digital_pairs_matrix.csv") -> pd.DataFrame:
+def load_digital_pairs_matrix(path: str = "digital_pairs_matrix.csv"):
+    """
+    Loads a % matrix (0..100) for digital usage & intersections.
+    Auto-scales if file is already in 0..1.
+    Cache invalidates when file mtime changes.
+    """
+    mtime = os.path.getmtime(path)  # part of cache key
     df = pd.read_csv(path, sep=";", decimal=",", index_col=0, encoding="utf-8")
     df.columns = [str(c).strip() for c in df.columns]
     df.index = [str(i).strip() for i in df.index]
-    maxv = float(df.max().max())
+    maxv = float(df.max(numeric_only=True).max())
     if maxv <= 1.5:
         df = df * 100.0
     return df.clip(lower=0, upper=100)
+
+def load_digital_pairs_matrix_with_fallback():
+    # Try local first, then /mnt/data (useful when running in hosted envs)
+    candidates = [
+        "digital_pairs_matrix.csv",
+        os.path.join("/mnt/data", "digital_pairs_matrix.csv"),
+    ]
+    last_err = None
+    for p in candidates:
+        try:
+            if os.path.exists(p):
+                return load_digital_pairs_matrix(p)
+        except Exception as e:
+            last_err = e
+    if last_err:
+        raise last_err
+    raise FileNotFoundError("digital_pairs_matrix.csv not found in working dir or /mnt/data.")
 
 # =====================================================================
 # Mode 1
@@ -235,6 +297,7 @@ elif mode == MODE_LABELS[1]:
         st.info("Select at least two channels to calculate.")
         st.stop()
 
+    # Default usage proportions (0..1)
     matrix_rows = [
         [0.25, 0.14, 0.14, 0.14, 0.14, 0.20, 0.22, 0.14, 0.19, 0.22, 0.22, 0.22, 0.23, 0.20],
         [0.16, 0.37, 0.24, 0.21, 0.23, 0.32, 0.38, 0.21, 0.36, 0.36, 0.35, 0.35, 0.38, 0.33],
@@ -251,7 +314,7 @@ elif mode == MODE_LABELS[1]:
         [0.23, 0.33, 0.41, 0.31, 0.33, 0.63, 0.65, 0.32, 0.58, 0.70, 0.74, 0.72, 0.85, 0.68],
         [0.23, 0.33, 0.44, 0.32, 0.33, 0.67, 0.67, 0.38, 0.61, 0.71, 0.77, 0.78, 0.77, 0.80],
     ]
-    default_usage_df = pd.DataFrame(matrix_rows, index=catalog, columns=catalog)
+    default_usage_df_units = pd.DataFrame(matrix_rows, index=catalog, columns=catalog)  # 0..1
 
     if "reach_values" not in st.session_state:
         st.session_state["reach_values"] = {}
@@ -284,39 +347,49 @@ elif mode == MODE_LABELS[1]:
         st.error("Media reach values must be between 0 and 100%.")
         st.stop()
 
+    # Prepare an editable % matrix in session state (start from defaults in %)
     key_mat = "usage_matrix_df"
     if (key_mat not in st.session_state
         or list(st.session_state[key_mat].index) != chosen
         or list(st.session_state[key_mat].columns) != chosen):
-        st.session_state[key_mat] = (default_usage_df.loc[chosen, chosen] * 100.0).round(1)
+        st.session_state[key_mat] = (default_usage_df_units.loc[chosen, chosen] * 100.0).round(1)
 
-    U_df_pct = st.session_state[key_mat].copy()
-    U = U_df_pct.copy()
-    for a in chosen:
-        for b in chosen:
-            U.loc[a, b] = pct_to_unit(U.loc[a, b])
+    U_df_pct = st.session_state[key_mat].copy()  # % for UI
+    # Convert to 0..1 internally (vectorized and unambiguous)
+    U = to_unit_df_from_pct(U_df_pct)
 
-    # Symmetrize off-diagonals
+    # Symmetrize off-diagonals and fill missing with 0.0
     for i, a in enumerate(chosen):
         for j, b in enumerate(chosen):
             if j <= i:
                 continue
-            ab, ba = U.loc[a, b], U.loc[b, a]
-            both = [x for x in (ab, ba) if x is not None]
-            v = 0.5 * (ab + ba) if len(both) == 2 else (both[0] if len(both) == 1 else None)
+            ab = U.loc[a, b]
+            ba = U.loc[b, a]
+            both = [x for x in (ab, ba) if pd.notna(x)]
+            v = float(np.mean(both)) if both else 0.0
             U.loc[a, b] = U.loc[b, a] = v
 
-    clipped = []
+    # Validate diagonals and clip impossible off-diagonals
     for a in chosen:
-        ua = U.loc[a, a]
-        if ua is None or not (0 <= ua <= 1):
+        ua = float(U.loc[a, a])
+        if not (0.0 <= ua <= 1.0):
             st.error("Monthly usage U(A) (diagonal) must be 0–100%.")
             st.stop()
+    # Enforce feasibility: U(a,b) ≤ min(U(a,a), U(b,b))
+    for a in chosen:
+        for b in chosen:
+            if a == b:
+                continue
+            U.loc[a, b] = float(min(U.loc[a, b], U.loc[a, a], U.loc[b, b]))
+
+    # Clip R to U(a,a)
+    clipped = []
+    for a in chosen:
+        ua = float(U.loc[a, a])
         if R_raw[a] - ua > 1e-9:
             clipped.append((a, R_raw[a], ua))
-
-    R_regular = {a: min(R_raw[a], U.loc[a, a]) for a in chosen}
-    R_attentive = {ch: min(R_regular[ch] * ADJ.get(ch, 1.0), U.loc[ch, ch]) for ch in chosen}
+    R_regular = {a: min(R_raw[a], float(U.loc[a, a])) for a in chosen}
+    R_attentive = {ch: min(R_regular[ch] * ADJ.get(ch, 1.0), float(U.loc[ch, ch])) for ch in chosen}
 
     if clipped:
         msg = "Some inputs exceeded monthly usage and were clipped:<br>" + "<br>".join(
@@ -358,6 +431,7 @@ elif mode == MODE_LABELS[1]:
             num_rows="fixed",
             key="usage_matrix_editor_bottom",
         )
+        # Keep in session state
         st.session_state[key_mat] = edited
 
         diag = pd.DataFrame({
@@ -366,7 +440,7 @@ elif mode == MODE_LABELS[1]:
             "Reach % (input)": [st.session_state["reach_values"].get(c) for c in chans],
             "Reach % (Regular)": [R_regular[c] * 100 for c in chans],
             "Reach % (Attentive)": [R_attentive[c] * 100 for c in chans],
-            "U(A) % (monthly users)": [U.loc[c, c] * 100 for c in chans],
+            "U(A) % (monthly users)": [float(U.loc[c, c]) * 100 for c in chans],
         })
         st.markdown("**Diagnostics (per channel)**")
         st.dataframe(diag, use_container_width=True, hide_index=True)
@@ -374,9 +448,9 @@ elif mode == MODE_LABELS[1]:
         st.markdown("**Derived effective overlap P(A∩B) used for the union (%, after conversion & clipping)**")
         tabs = st.tabs(["Regular", "Attentive"])
         with tabs[0]:
-            st.dataframe(P2_reg.applymap(lambda v: None if v is None else round(v * 100, 2)))
+            st.dataframe(P2_reg.applymap(lambda v: None if v is None else round(float(v) * 100, 2)))
         with tabs[1]:
-            st.dataframe(P2_att.applymap(lambda v: None if v is None else round(v * 100, 2)))
+            st.dataframe(P2_att.applymap(lambda v: None if v is None else round(float(v) * 100, 2)))
 
 # =====================================================================
 # Mode 3: Digital pairs matrix (Attention idx only in Math part)
@@ -390,9 +464,9 @@ elif mode == MODE_LABELS[2]:
     )
 
     try:
-        digital_pct = load_digital_pairs_matrix("digital_pairs_matrix.csv")
+        digital_pct = load_digital_pairs_matrix_with_fallback()  # % 0..100
     except FileNotFoundError:
-        st.error("`digital_pairs_matrix.csv` not found. Place it next to this script.")
+        st.error("`digital_pairs_matrix.csv` not found. Place it next to this script or in /mnt/data.")
         st.stop()
 
     digital_catalog = list(digital_pct.index)
@@ -448,30 +522,41 @@ elif mode == MODE_LABELS[2]:
         st.error("Media reach values must be between 0 and 100%.")
         st.stop()
 
-    U_df_pct = digital_pct.loc[chosen, chosen].copy()
-    U_df_pct_display = U_df_pct.round(1)          # tidy display
-    U = (U_df_pct / 100.0).astype(float)
+    U_df_pct = digital_pct.loc[chosen, chosen].copy()                # % for UI
+    U_df_pct_display = U_df_pct.round(1)                              # tidy display
+    U = to_unit_df_from_pct(U_df_pct).astype(float)                   # 0..1
 
-    # Auto-clip to U(A)
-    clipped = []
+    # Validate diagonals
     for a in chosen:
-        ua = U.loc[a, a]
-        if not (0 <= ua <= 1):
+        ua = float(U.loc[a, a])
+        if not (0.0 <= ua <= 1.0):
             st.error(f"Monthly usage U({a}) must be 0–100%.")
             st.stop()
-        if R_raw[a] - ua > 1e-9:
-            clipped.append((a, R_raw[a], ua))
 
-    # Symmetrize off-diagonals
+    # Symmetrize off-diagonals; if both NaN → 0.0
     for i, a in enumerate(chosen):
         for j, b in enumerate(chosen):
             if j <= i:
                 continue
-            v = float(np.nanmean([U.loc[a, b], U.loc[b, a]]))
+            v = float(np.nanmean([U.loc[a, b], U.loc[b, a]])) if not np.isnan(np.nanmean([U.loc[a, b], U.loc[b, a]])) else 0.0
             U.loc[a, b] = U.loc[b, a] = v
 
-    R_regular = {a: min(R_raw[a], U.loc[a, a]) for a in chosen}
-    R_attentive = {ch: float(np.clip(R_regular[ch] * att_idx[ch], 0.0, U.loc[ch, ch])) for ch in chosen}
+    # Enforce feasibility: U(a,b) ≤ min(U(a,a), U(b,b))
+    for a in chosen:
+        for b in chosen:
+            if a == b:
+                continue
+            U.loc[a, b] = float(min(U.loc[a, b], U.loc[a, a], U.loc[b, b]))
+
+    # Clip marginals to usage
+    clipped = []
+    for a in chosen:
+        ua = float(U.loc[a, a])
+        if R_raw[a] - ua > 1e-9:
+            clipped.append((a, R_raw[a], ua))
+    R_regular = {a: min(R_raw[a], float(U.loc[a, a])) for a in chosen}
+    # Apply attention; clamp to U(a,a)
+    R_attentive = {ch: float(np.clip(R_regular[ch] * att_idx[ch], 0.0, float(U.loc[ch, ch]))) for ch in chosen}
 
     if clipped:
         msg = "Some inputs exceeded monthly usage and were clipped:<br>" + "<br>".join(
@@ -538,7 +623,7 @@ elif mode == MODE_LABELS[2]:
             "Attention idx (used)": [st.session_state["attention_overrides"].get(c, attention_factor_for_channel(c)) for c in chans],
             "Reach % (Regular)": [R_regular[c] * 100 for c in chans],
             "Reach % (Attentive)": [R_attentive[c] * 100 for c in chans],
-            "U(A) % (monthly users)": [U.loc[c, c] * 100 for c in chans],
+            "U(A) % (monthly users)": [float(U.loc[c, c]) * 100 for c in chans],
         })
         st.markdown("**Diagnostics (per channel)**")
         st.dataframe(diag, use_container_width=True, hide_index=True)
@@ -546,6 +631,6 @@ elif mode == MODE_LABELS[2]:
         st.markdown("**Derived effective overlap P(A∩B) used for the union (%, after conversion & clipping)**")
         tabs = st.tabs(["Regular", "Attentive"])
         with tabs[0]:
-            st.dataframe(P2_reg.applymap(lambda v: None if pd.isna(v) else round(v * 100, 2)))
+            st.dataframe(P2_reg.applymap(lambda v: None if pd.isna(v) else round(float(v) * 100, 2)))
         with tabs[1]:
-            st.dataframe(P2_att.applymap(lambda v: None if pd.isna(v) else round(v * 100, 2)))
+            st.dataframe(P2_att.applymap(lambda v: None if pd.isna(v) else round(float(v) * 100, 2)))
