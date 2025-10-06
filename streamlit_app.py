@@ -116,11 +116,10 @@ def _validate_digital_channels_df(df: pd.DataFrame) -> List[str]:
         warnings.append(f"Alias collisions detected (same alias mapped to multiple names), e.g., {examples}.")
     return warnings
 
-@st.cache_data
+@st.cache_data(ttl=60)
 def load_digital_channels_table(path: Path = DIGITAL_CHANNELS_CSV) -> pd.DataFrame:
     """
     Expected columns: name, category, aliases (pipe-separated: a|b|c)
-    Cache busts on file mtime.
     """
     # try primary then /mnt/data
     if not path.exists():
@@ -129,7 +128,6 @@ def load_digital_channels_table(path: Path = DIGITAL_CHANNELS_CSV) -> pd.DataFra
             path = alt_path
         else:
             raise FileNotFoundError(f"Missing digital channels file: {path} (also tried {alt_path}).")
-    _ = path.stat().st_mtime  # include mtime in cache key
     df = pd.read_csv(path)
     for col in ["name", "category", "aliases"]:
         if col not in df.columns:
@@ -145,7 +143,7 @@ def load_digital_channels_table(path: Path = DIGITAL_CHANNELS_CSV) -> pd.DataFra
         st.warning(" | ".join(warns))
     return df
 
-@st.cache_data
+@st.cache_data(ttl=60)
 def build_digital_lookups() -> Tuple[Dict[str, str], Dict[str, str]]:
     """
     Returns:
@@ -189,7 +187,8 @@ def attention_factor_for_channel(ch: str) -> float:
 
 # -------------------- Charts --------------------
 def bar_chart(df, x_field, y_field, height=320, color="#9A3EFF"):
-    auto_height = max(height, 36 * max(1, len(df)))
+    # cap height to avoid overly tall charts with many rows
+    auto_height = min(max(height, 36 * max(1, len(df))), 800)
     return (
         alt.Chart(df)
         .mark_bar(color=color)
@@ -265,12 +264,12 @@ def _read_table_any_decimal(path: Path) -> pd.DataFrame:
     except Exception:
         return pd.read_csv(path, index_col=0, sep=";", decimal=",")
 
-@st.cache_data
+@st.cache_data(ttl=60)
 def load_default_usage_matrix(path: Path = DEFAULT_USAGE_MATRIX_CSV) -> pd.DataFrame:
     """
     Returns a square 0..1 matrix with identical row/col labels.
     Auto-scales if values look like %.
-    Cache busts on file mtime. If file missing, returns a neutral identity-style fallback.
+    If file missing, returns a neutral identity-style fallback.
     """
     # try primary then /mnt/data
     if not path.exists():
@@ -290,7 +289,6 @@ def load_default_usage_matrix(path: Path = DEFAULT_USAGE_MATRIX_CSV) -> pd.DataF
             np.fill_diagonal(df_fallback.values, 1.0)
             return df_fallback
 
-    _ = path.stat().st_mtime  # include mtime in cache key
     df = _read_table_any_decimal(path)
     df.index = df.index.map(lambda s: str(s).strip())
     df.columns = df.columns.map(lambda s: str(s).strip())
@@ -312,7 +310,7 @@ def get_usage_submatrix(chosen: List[str]) -> pd.DataFrame:
         base = base.sort_index().sort_index(axis=1)
     return base.loc[chosen, chosen].copy()
 
-@st.cache_data
+@st.cache_data(ttl=60)
 def load_digital_pairs_matrix(path: Path = DIGITAL_PAIRS_MATRIX_CSV) -> pd.DataFrame:
     """
     Robust loader for the digital pairs matrix.
@@ -329,8 +327,6 @@ def load_digital_pairs_matrix(path: Path = DIGITAL_PAIRS_MATRIX_CSV) -> pd.DataF
         if not alt_path.exists():
             raise FileNotFoundError(f"{path} not found (also tried {alt_path}).")
         path = alt_path
-
-    _ = path.stat().st_mtime  # include mtime in cache key
 
     def _clean(df: pd.DataFrame) -> pd.DataFrame:
         # If index isn't set properly, set it to the first column when that column is non-numeric
@@ -425,6 +421,7 @@ if mode == MODE_LABELS[0]:
     st.metric("Overall Cross-Media Reach", f"{cross:.1%}")
 
     chart_df = pd.DataFrame({"Channel": channels, "Media reach": r_input})
+    chart_df = chart_df[chart_df["Channel"].str.strip() != ""]  # filter out blank labels
     st.altair_chart(bar_chart(chart_df, "Channel", "Media reach", height=320), use_container_width=True)
 
     with st.expander("Details"):
@@ -515,7 +512,7 @@ elif mode == MODE_LABELS[1]:
     for a in chosen:
         ua = float(U.loc[a, a])
         if not (0.0 <= ua <= 1.0):
-            st.error("Monthly usage U(A) (diagonal) must be 0–100%.")
+            st.error(f"Monthly usage U({a}) must be between 0% and 100%. Got {ua*100:.1f}%.")
             st.stop()
     # Enforce feasibility: U(a,b) ≤ min(U(a,a), U(b,b))
     for a in chosen:
@@ -681,7 +678,7 @@ elif mode == MODE_LABELS[2]:
     for a in chosen:
         ua = float(U.loc[a, a])
         if not (0.0 <= ua <= 1.0):
-            st.error(f"Monthly usage U({a}) must be 0–100%.")
+            st.error(f"Monthly usage U({a}) must be between 0% and 100%. Got {ua*100:.1f}%.")
             st.stop()
 
     # Symmetrize off-diagonals; if both NaN → 0.0
