@@ -1,10 +1,19 @@
 import os
 import re
+from pathlib import Path
+from typing import Tuple, Dict, List, Optional
+
 import numpy as np
 import pandas as pd
 import streamlit as st
 import altair as alt
 from base64 import b64encode
+
+# -------------------- Paths --------------------
+DATA_DIR = Path("data")
+DIGITAL_CHANNELS_CSV = DATA_DIR / "digital_channels.csv"
+DEFAULT_USAGE_MATRIX_CSV = DATA_DIR / "default_usage_matrix.csv"
+DIGITAL_PAIRS_MATRIX_CSV = DATA_DIR / "digital_pairs_matrix.csv"
 
 # -------------------- Page setup --------------------
 st.set_page_config(page_title="Cross-Reach Calculator",
@@ -71,7 +80,6 @@ def pct_to_unit(x):
         x = float(str(x).replace(",", "."))
     except Exception:
         return None
-    # Reject out-of-range early (you also have UI min/max, but double safety)
     if x < 0 or x > 100:
         return None
     return x / 100.0
@@ -84,55 +92,102 @@ def to_unit_df_from_pct(df_pct: pd.DataFrame) -> pd.DataFrame:
     """Vectorized, unambiguous conversion of a % matrix to 0–1 (float)."""
     return (df_pct.astype(float) / 100.0)
 
-# --- Digital mapping (used only when needed) ---
-DIGITAL_CATEGORY = {
-    # News portals
-    "BNS": "News portals", "ELTA": "News portals", "15min.lt": "News portals", "delfi.lt": "News portals",
-    "diena.lt": "News portals", "lnk.lt": "News portals", "lrytas.lt": "News portals", "lrt.lt": "News portals",
-    "tv3.lt": "News portals", "vz.lt": "News portals", "zmones.lt": "News portals",
-    # Other sites / Search
-    "gmail.com": "Other sites", "google.lt": "Search",
-    # Social media
-    "BeReal": "Social media", "Discord": "Social media", "Facebook": "Social media", "Instagram": "Social media",
-    "Linkedin": "Social media", "Pinterest": "Social media", "Reddit": "Social media", "Snapchat": "Social media",
-    "Telegram": "Social media", "Threads": "Social media", "Tik ToK": "Social media", "Tinder": "Social media",
-    "VK": "Social media", "X": "Social media",
-    # Podcasts
-    "BasketNews": "Podcasts", "Bazaras? Bazaras!": "Podcasts", "Čia tik tarp mūsų": "Podcasts",
-    "Kitokie pasikalbėjimai": "Podcasts", "Klajumo kanalas": "Podcasts", "Nepatogūs klausimai": "Podcasts",
-    "Nesiaukite": "Podcasts", "Penktas kėlinys": "Podcasts", "PIN (Pradėk iš naujo)": "Podcasts",
-    "Pralaužk vieną šaltą": "Podcasts", "Proto Industrija": "Podcasts", "Proto pemza": "Podcasts",
-    "Savaitės rifas": "Podcasts", "Tapk geresniu": "Podcasts", "Vėl tie patys": "Podcasts",
-    # VOD (incl. music/tv streaming)
-    "15min Klausyk": "VOD", "3Play / TV3 Play": "VOD", "Amazon Prime": "VOD", "Apple TV": "VOD",
-    "Delfi TV": "VOD", "Disney+": "VOD", "Go3": "VOD", "HBO": "VOD", "Youtube": "VOD", "Laisvės TV": "VOD",
-    "lnk.lt / LNK Go": "VOD", "Lrytas TV": "VOD", "LRT Epika": "VOD", "LRT Mediateka": "VOD",
-    "Netflix": "VOD", "Spotify": "VOD", "Telia Play": "VOD", "Twitch": "VOD", "Žmonės Cinema": "VOD",
-}
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", str(s).strip().lower())
-_DIGITAL_CATEGORY_NORM = {_norm(k): v for k, v in DIGITAL_CATEGORY.items()}
-_ALIASES = {
-    "youtube": "Youtube",
-    "you tube": "Youtube",
-    "tik tok": "Tik ToK",
-    "tiktok": "Tik ToK",
-    "linkedin": "Linkedin",
-    "x (twitter)": "X",
-    "tv3 play": "3Play / TV3 Play",
-    "lnk go": "lnk.lt / LNK Go",
-}
-for alias, canonical in _ALIASES.items():
-    _DIGITAL_CATEGORY_NORM[_norm(alias)] = DIGITAL_CATEGORY.get(canonical, "—")
+
+# -------------------- Loaders: digital channels (categories + aliases) --------------------
+def _validate_digital_channels_df(df: pd.DataFrame) -> List[str]:
+    """Return a list of human-readable warnings for common data quality issues."""
+    warnings: List[str] = []
+    # missing/blank categories
+    if df["category"].isna().any() or (df["category"].astype(str).str.strip() == "").any():
+        warnings.append("Some rows have a missing/blank 'category'.")
+    # duplicate alias collisions
+    alias_map: Dict[str, List[str]] = {}
+    for _, row in df.iterrows():
+        canonical = row["name"]
+        aliases = [a.strip() for a in str(row["aliases"]).split("|") if a.strip()]
+        for a in aliases:
+            n = _norm(a)
+            alias_map.setdefault(n, []).append(canonical)
+    dup_aliases = {a: c for a, c in alias_map.items() if len(set(c)) > 1}
+    if dup_aliases:
+        examples = ", ".join(list(dup_aliases.keys())[:5])
+        warnings.append(f"Alias collisions detected (same alias mapped to multiple names), e.g., {examples}.")
+    return warnings
+
+@st.cache_data
+def load_digital_channels_table(path: Path = DIGITAL_CHANNELS_CSV) -> pd.DataFrame:
+    """
+    Expected columns: name, category, aliases (pipe-separated: a|b|c)
+    Cache busts on file mtime.
+    """
+    # try primary then /mnt/data
+    if not path.exists():
+        alt_path = Path("/mnt/data") / path.name
+        if alt_path.exists():
+            path = alt_path
+        else:
+            raise FileNotFoundError(f"Missing digital channels file: {path} (also tried {alt_path}).")
+    _ = path.stat().st_mtime  # include mtime in cache key
+    df = pd.read_csv(path)
+    for col in ["name", "category", "aliases"]:
+        if col not in df.columns:
+            raise ValueError(f"{path} must contain column '{col}'.")
+    df["name"] = df["name"].astype(str)
+    df["category"] = df["category"].astype(str)
+    df["aliases"] = df["aliases"].fillna("").astype(str)
+    df["name_norm"] = df["name"].str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
+
+    # surface warnings once in the UI
+    warns = _validate_digital_channels_df(df)
+    if warns:
+        st.warning(" | ".join(warns))
+    return df
+
+@st.cache_data
+def build_digital_lookups() -> Tuple[Dict[str, str], Dict[str, str]]:
+    """
+    Returns:
+      name_to_category: normalized name/alias -> category
+      alias_to_canonical: normalized alias -> canonical name
+    """
+    df = load_digital_channels_table()
+    name_to_category: Dict[str, str] = {}
+    alias_to_canonical: Dict[str, str] = {}
+
+    for _, row in df.iterrows():
+        canonical = row["name"]
+        cat = row["category"]
+        name_to_category[_norm(canonical)] = cat
+
+        aliases = [a.strip() for a in row["aliases"].split("|") if a.strip()]
+        for a in aliases:
+            n = _norm(a)
+            alias_to_canonical[n] = canonical
+            name_to_category[n] = cat
+    return name_to_category, alias_to_canonical
+
+_name_to_cat, _alias_to_canon = build_digital_lookups()
+
+def canonicalize_channel(ch: str) -> str:
+    """Map an alias to its canonical channel name if known."""
+    n = _norm(ch)
+    return _alias_to_canon.get(n, ch)
+
+def digital_category_for(ch: str) -> Optional[str]:
+    return _name_to_cat.get(_norm(ch))
 
 def attention_factor_for_channel(ch: str) -> float:
+    # media class first
     if ch in ADJ:
         return ADJ[ch]
-    cat = _DIGITAL_CATEGORY_NORM.get(_norm(ch))
+    cat = digital_category_for(ch)
     if cat in ADJ:
         return ADJ[cat]
     return 1.0
 
+# -------------------- Charts --------------------
 def bar_chart(df, x_field, y_field, height=320, color="#9A3EFF"):
     auto_height = max(height, 36 * max(1, len(df)))
     return (
@@ -146,6 +201,7 @@ def bar_chart(df, x_field, y_field, height=320, color="#9A3EFF"):
         .properties(height=auto_height)
     )
 
+# -------------------- Union math --------------------
 def compute_union(chans, R_dict, U_matrix):
     """
     chans: list of str
@@ -172,7 +228,6 @@ def compute_union(chans, R_dict, U_matrix):
                 continue
             uab = float(U.loc[a, b])
             pab = uab * r[a] * r[b]  # scaled intersection
-            # Cap by marginals
             pab = min(pab, float(R_dict[a]), float(R_dict[b]))
             P2.loc[a, b] = P2.loc[b, a] = float(pab)
 
@@ -185,7 +240,6 @@ def compute_union(chans, R_dict, U_matrix):
         R1, R2, R3 = float(R_dict[a]), float(R_dict[b]), float(R_dict[c])
         P_ab, P_ac, P_bc = float(P2.loc[a, b]), float(P2.loc[a, c]), float(P2.loc[b, c])
         denom = max(1e-12, R1 * R2 * R3)
-        # multiplicative guess bounded by Bonferroni-like limits
         t = (P_ab * P_ac * P_bc) / denom
         lower = max(0.0, (P_ab + P_ac + P_bc) - R1 - R2 - R3)
         upper = min(P_ab, P_ac, P_bc)
@@ -201,39 +255,139 @@ def compute_union(chans, R_dict, U_matrix):
     est_union = float(np.clip(sum_R - sum_pairs + triple_sum, lower_pair, upper_simple))
     return est_union, lower_pair, upper_simple, P2
 
-# ---------- CSV loader with cache that refreshes on file update ----------
-@st.cache_data
-def load_digital_pairs_matrix(path: str = "digital_pairs_matrix.csv"):
+# -------------------- CSV loaders (cached) --------------------
+def _read_table_any_decimal(path: Path) -> pd.DataFrame:
     """
-    Loads a % matrix (0..100) for digital usage & intersections.
-    Auto-scales if file is already in 0..1.
-    Cache invalidates when file mtime changes.
+    Try common separators/decimal conventions: default CSV, or ; with , decimal.
     """
-    mtime = os.path.getmtime(path)  # part of cache key
-    df = pd.read_csv(path, sep=";", decimal=",", index_col=0, encoding="utf-8")
-    df.columns = [str(c).strip() for c in df.columns]
-    df.index = [str(i).strip() for i in df.index]
-    maxv = float(df.max(numeric_only=True).max())
-    if maxv <= 1.5:
-        df = df * 100.0
-    return df.clip(lower=0, upper=100)
+    try:
+        return pd.read_csv(path, index_col=0)
+    except Exception:
+        return pd.read_csv(path, index_col=0, sep=";", decimal=",")
 
-def load_digital_pairs_matrix_with_fallback():
-    # Try local first, then /mnt/data (useful when running in hosted envs)
-    candidates = [
-        "digital_pairs_matrix.csv",
-        os.path.join("/mnt/data", "digital_pairs_matrix.csv"),
-    ]
-    last_err = None
-    for p in candidates:
-        try:
-            if os.path.exists(p):
-                return load_digital_pairs_matrix(p)
-        except Exception as e:
-            last_err = e
-    if last_err:
-        raise last_err
-    raise FileNotFoundError("digital_pairs_matrix.csv not found in working dir or /mnt/data.")
+@st.cache_data
+def load_default_usage_matrix(path: Path = DEFAULT_USAGE_MATRIX_CSV) -> pd.DataFrame:
+    """
+    Returns a square 0..1 matrix with identical row/col labels.
+    Auto-scales if values look like %.
+    Cache busts on file mtime. If file missing, returns a neutral identity-style fallback.
+    """
+    # try primary then /mnt/data
+    if not path.exists():
+        alt_path = Path("/mnt/data") / path.name
+        if alt_path.exists():
+            path = alt_path
+        else:
+            # Fallback: identity-ish matrix on known media classes
+            keys = list(ADJ.keys())
+            if not keys:
+                raise FileNotFoundError(f"Missing usage matrix file: {path} (also tried {alt_path}).")
+            st.warning(
+                "default_usage_matrix.csv not found; using a neutral fallback (diagonal 100%, no off-diagonal overlaps). "
+                "Please provide a proper matrix in data/default_usage_matrix.csv."
+            )
+            df_fallback = pd.DataFrame(0.0, index=keys, columns=keys)
+            np.fill_diagonal(df_fallback.values, 1.0)
+            return df_fallback
+
+    _ = path.stat().st_mtime  # include mtime in cache key
+    df = _read_table_any_decimal(path)
+    df.index = df.index.map(lambda s: str(s).strip())
+    df.columns = df.columns.map(lambda s: str(s).strip())
+    if set(df.index) != set(df.columns):
+        raise ValueError("default_usage_matrix.csv must be square with identical row/column labels.")
+    df = df.astype(float)
+    maxv = float(np.nanmax(df.to_numpy()))
+    if maxv > 1.5:  # probably entered as %
+        df = df / 100.0
+    return df.clip(lower=0, upper=1)
+
+def get_usage_submatrix(chosen: List[str]) -> pd.DataFrame:
+    base = load_default_usage_matrix()
+    missing = [c for c in chosen if c not in base.index]
+    if missing:
+        for m in missing:
+            base.loc[m, :] = 0.0
+            base.loc[:, m] = 0.0
+        base = base.sort_index().sort_index(axis=1)
+    return base.loc[chosen, chosen].copy()
+
+@st.cache_data
+def load_digital_pairs_matrix(path: Path = DIGITAL_PAIRS_MATRIX_CSV) -> pd.DataFrame:
+    """
+    Robust loader for the digital pairs matrix.
+
+    Accepts BOTH:
+      • legacy files (sep=';', decimal=',')
+      • your new format (sep=',', decimal='.')
+
+    Returns a % matrix in [0, 100] with clean string labels.
+    """
+    # locate file (repo first, then /mnt/data)
+    if not path.exists():
+        alt_path = Path("/mnt/data") / path.name
+        if not alt_path.exists():
+            raise FileNotFoundError(f"{path} not found (also tried {alt_path}).")
+        path = alt_path
+
+    _ = path.stat().st_mtime  # include mtime in cache key
+
+    def _clean(df: pd.DataFrame) -> pd.DataFrame:
+        # If index isn't set properly, set it to the first column when that column is non-numeric
+        if df.index.name is None and df.shape[1] > 0:
+            if not pd.api.types.is_numeric_dtype(df.iloc[:, 0]):
+                df = df.set_index(df.columns[0])
+
+        # Drop accidental "Unnamed: ..." columns
+        df = df.loc[:, [c for c in df.columns if not str(c).strip().lower().startswith("unnamed")]]
+
+        # Standardize labels
+        df.index = [str(i).strip() for i in df.index]
+        df.columns = [str(c).strip() for c in df.columns]
+
+        # Coerce values to numeric, handling % signs, nbsp, and comma decimals
+        df = df.applymap(
+            lambda x: pd.to_numeric(
+                str(x).replace("\u00a0", " ").replace("%", "").strip().replace(",", "."),
+                errors="coerce",
+            )
+        )
+
+        # If values look like 0–1, scale to %
+        with np.errstate(all="ignore"):
+            maxv = float(np.nanmax(df.to_numpy())) if df.size else 0.0
+        if maxv <= 1.5:
+            df = df * 100.0
+
+        # Clip to [0,100]
+        return df.clip(lower=0, upper=100)
+
+    # Try auto-detecting the delimiter first (handles "," and ";")
+    try:
+        df = pd.read_csv(
+            path,
+            engine="python",
+            sep=None,              # autodetect delimiter
+            decimal=".",           # start with dot-decimal
+            encoding="utf-8-sig",  # eats BOM if present
+        )
+        df = _clean(df)
+        if len(df) >= 2 and df.shape[1] >= 2:
+            return df
+    except Exception:
+        pass
+
+    # Fallback 1: legacy semicolon + comma decimals
+    try:
+        df = pd.read_csv(path, sep=";", decimal=",", encoding="utf-8-sig", index_col=0)
+        return _clean(df)
+    except Exception:
+        pass
+
+    # Fallback 2: force comma + dot decimals
+    df = pd.read_csv(path, sep=",", decimal=".", encoding="utf-8-sig")
+    return _clean(df)
+
 
 # =====================================================================
 # Mode 1
@@ -290,33 +444,20 @@ elif mode == MODE_LABELS[1]:
         "The **monthly usage** matrix U(A) and U(A∩B) is editable at the end."
     )
 
-    catalog = [
-        "Cinema","Direct mail","Influencers","Magazines","Newspapers","News portals",
-        "OOH","Podcasts","POS (Instore)","Radio","Search","Social media","TV","VOD",
-    ]
-    chosen = st.multiselect("Channels to include", catalog, default=["TV", "Social media", "Radio"])
+    # Media catalog from attention map (keeps one source of truth)
+    catalog = list(ADJ.keys())
+
+    chosen = st.multiselect("Channels to include", catalog, default=[c for c in ["TV", "Social media", "Radio"] if c in catalog])
     if len(chosen) < 2:
         st.info("Select at least two channels to calculate.")
         st.stop()
 
-    # Default usage proportions (0..1)
-    matrix_rows = [
-        [0.25, 0.14, 0.14, 0.14, 0.14, 0.20, 0.22, 0.14, 0.19, 0.22, 0.22, 0.22, 0.23, 0.20],
-        [0.16, 0.37, 0.24, 0.21, 0.23, 0.32, 0.38, 0.21, 0.36, 0.36, 0.35, 0.35, 0.38, 0.33],
-        [0.16, 0.24, 0.47, 0.20, 0.21, 0.42, 0.42, 0.27, 0.38, 0.43, 0.45, 0.47, 0.47, 0.44],
-        [0.14, 0.18, 0.18, 0.34, 0.26, 0.27, 0.28, 0.17, 0.27, 0.29, 0.29, 0.29, 0.31, 0.29],
-        [0.14, 0.20, 0.18, 0.26, 0.36, 0.29, 0.30, 0.17, 0.28, 0.31, 0.31, 0.30, 0.33, 0.29],
-        [0.22, 0.32, 0.42, 0.31, 0.33, 0.73, 0.62, 0.34, 0.57, 0.66, 0.71, 0.70, 0.71, 0.67],
-        [0.22, 0.33, 0.37, 0.28, 0.30, 0.55, 0.72, 0.31, 0.62, 0.61, 0.63, 0.61, 0.65, 0.59],
-        [0.16, 0.21, 0.27, 0.20, 0.19, 0.34, 0.36, 0.38, 0.32, 0.35, 0.37, 0.38, 0.37, 0.38],
-        [0.19, 0.32, 0.34, 0.27, 0.28, 0.50, 0.62, 0.29, 0.66, 0.55, 0.57, 0.56, 0.58, 0.54],
-        [0.22, 0.32, 0.38, 0.29, 0.31, 0.58, 0.61, 0.31, 0.55, 0.77, 0.67, 0.65, 0.70, 0.63],
-        [0.24, 0.35, 0.45, 0.33, 0.35, 0.71, 0.71, 0.37, 0.64, 0.75, 0.84, 0.81, 0.83, 0.77],
-        [0.24, 0.35, 0.47, 0.33, 0.34, 0.70, 0.69, 0.38, 0.63, 0.74, 0.81, 0.84, 0.81, 0.78],
-        [0.23, 0.33, 0.41, 0.31, 0.33, 0.63, 0.65, 0.32, 0.58, 0.70, 0.74, 0.72, 0.85, 0.68],
-        [0.23, 0.33, 0.44, 0.32, 0.33, 0.67, 0.67, 0.38, 0.61, 0.71, 0.77, 0.78, 0.77, 0.80],
-    ]
-    default_usage_df_units = pd.DataFrame(matrix_rows, index=catalog, columns=catalog)  # 0..1
+    # Load default usage matrix (0..1), then take submatrix for chosen
+    try:
+        U0_units = get_usage_submatrix(chosen)  # 0..1
+    except Exception as e:
+        st.error(f"Failed to load usage matrix: {e}")
+        st.stop()
 
     if "reach_values" not in st.session_state:
         st.session_state["reach_values"] = {}
@@ -354,10 +495,9 @@ elif mode == MODE_LABELS[1]:
     if (key_mat not in st.session_state
         or list(st.session_state[key_mat].index) != chosen
         or list(st.session_state[key_mat].columns) != chosen):
-        st.session_state[key_mat] = (default_usage_df_units.loc[chosen, chosen] * 100.0).round(1)
+        st.session_state[key_mat] = (U0_units * 100.0).round(1)
 
     U_df_pct = st.session_state[key_mat].copy()  # % for UI
-    # Convert to 0..1 internally (vectorized and unambiguous)
     U = to_unit_df_from_pct(U_df_pct)
 
     # Symmetrize off-diagonals and fill missing with 0.0
@@ -398,6 +538,10 @@ elif mode == MODE_LABELS[1]:
             f"• <strong>{a}</strong>: {r*100:.1f}% → {u*100:.1f}%" for a, r, u in clipped
         )
         gray_notice(msg)
+        try:
+            st.toast("One or more reaches were clipped to monthly usage.", icon="⚠️")
+        except Exception:
+            pass
 
     chans = chosen[:]
     est_reg, lb_reg, ub_reg, P2_reg = compute_union(chans, R_regular, U)
@@ -466,9 +610,12 @@ elif mode == MODE_LABELS[2]:
     )
 
     try:
-        digital_pct = load_digital_pairs_matrix_with_fallback()  # % 0..100
-    except FileNotFoundError:
-        st.error("`digital_pairs_matrix.csv` not found. Place it next to this script or in /mnt/data.")
+        digital_pct = load_digital_pairs_matrix()  # % 0..100
+    except FileNotFoundError as e:
+        st.error(f"`{DIGITAL_PAIRS_MATRIX_CSV}` not found. {e}")
+        st.stop()
+    except Exception as e:
+        st.error(f"Failed to load digital pairs matrix: {e}")
         st.stop()
 
     digital_catalog = list(digital_pct.index)
@@ -488,7 +635,7 @@ elif mode == MODE_LABELS[2]:
     reach_init = [float(st.session_state["reach_values_digital"].get(ch, 0.0)) for ch in chosen]
     marg_df = pd.DataFrame({
         "Channel": chosen,
-        "Category": [_DIGITAL_CATEGORY_NORM.get(_norm(ch), "—") for ch in chosen],
+        "Category": [digital_category_for(ch) or "—" for ch in chosen],
         "Reach %": reach_init,
     }).astype({"Reach %": float})
 
@@ -512,9 +659,11 @@ elif mode == MODE_LABELS[2]:
         st.session_state["reach_values_digital"][ch] = 0.0 if pd.isna(r_val) else float(r_val)
 
     # load current attention values (defaults if no override set yet)
-    att_idx = {}
+    att_idx: Dict[str, float] = {}
     for ch in chosen:
-        att_idx[ch] = float(st.session_state["attention_overrides"].get(ch, attention_factor_for_channel(ch)))
+        # ensure we consider aliases if user-supplied in the CSV
+        canon = canonicalize_channel(ch)
+        att_idx[canon] = float(st.session_state["attention_overrides"].get(canon, attention_factor_for_channel(canon)))
 
     R_raw = {ch: pct_to_unit(st.session_state["reach_values_digital"][ch]) for ch in chosen}
     if any(R_raw[ch] is None for ch in chosen):
@@ -540,7 +689,8 @@ elif mode == MODE_LABELS[2]:
         for j, b in enumerate(chosen):
             if j <= i:
                 continue
-            v = float(np.nanmean([U.loc[a, b], U.loc[b, a]])) if not np.isnan(np.nanmean([U.loc[a, b], U.loc[b, a]])) else 0.0
+            mean_val = np.nanmean([U.loc[a, b], U.loc[b, a]])
+            v = 0.0 if np.isnan(mean_val) else float(mean_val)
             U.loc[a, b] = U.loc[b, a] = v
 
     # Enforce feasibility: U(a,b) ≤ min(U(a,a), U(b,b))
@@ -558,13 +708,17 @@ elif mode == MODE_LABELS[2]:
             clipped.append((a, R_raw[a], ua))
     R_regular = {a: min(R_raw[a], float(U.loc[a, a])) for a in chosen}
     # Apply attention; clamp to U(a,a)
-    R_attentive = {ch: float(np.clip(R_regular[ch] * att_idx[ch], 0.0, float(U.loc[ch, ch]))) for ch in chosen}
+    R_attentive = {ch: float(np.clip(R_regular[ch] * att_idx[canonicalize_channel(ch)], 0.0, float(U.loc[ch, ch]))) for ch in chosen}
 
     if clipped:
         msg = "Some inputs exceeded monthly usage and were clipped:<br>" + "<br>".join(
             f"• <strong>{a}</strong>: {r*100:.1f}% → {u*100:.1f}%" for a, r, u in clipped
         )
         gray_notice(msg)
+        try:
+            st.toast("One or more reaches were clipped to monthly usage.", icon="⚠️")
+        except Exception:
+            pass
 
     chans = chosen[:]
     est_reg, lb_reg, ub_reg, P2_reg = compute_union(chans, R_regular, U)
@@ -598,8 +752,8 @@ elif mode == MODE_LABELS[2]:
         # Editable Attention here only
         att_df = pd.DataFrame({
             "Channel": chans,
-            "Category": [_DIGITAL_CATEGORY_NORM.get(_norm(c), "—") for c in chans],
-            "Attention idx": [att_idx[c] for c in chans],
+            "Category": [digital_category_for(c) or "—" for c in chans],
+            "Attention idx": [att_idx[canonicalize_channel(c)] for c in chans],
         }).astype({"Attention idx": float})
         att_edit = st.data_editor(
             att_df,
@@ -616,13 +770,14 @@ elif mode == MODE_LABELS[2]:
         # Persist edits so next rerun uses them
         for i, ch in enumerate(chans):
             new_val = att_edit.loc[i, "Attention idx"]
+            canon = canonicalize_channel(ch)
             if not pd.isna(new_val):
-                st.session_state["attention_overrides"][ch] = float(new_val)
+                st.session_state["attention_overrides"][canon] = float(new_val)
 
         diag = pd.DataFrame({
             "Channel": chans,
-            "Category": [_DIGITAL_CATEGORY_NORM.get(_norm(c), "—") for c in chans],
-            "Attention idx (used)": [st.session_state["attention_overrides"].get(c, attention_factor_for_channel(c)) for c in chans],
+            "Category": [digital_category_for(c) or "—" for c in chans],
+            "Attention idx (used)": [st.session_state["attention_overrides"].get(canonicalize_channel(c), attention_factor_for_channel(c)) for c in chans],
             "Reach % (Regular)": [R_regular[c] * 100 for c in chans],
             "Reach % (Attentive)": [R_attentive[c] * 100 for c in chans],
             "U(A) % (monthly users)": [float(U.loc[c, c]) * 100 for c in chans],
