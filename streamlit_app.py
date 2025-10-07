@@ -80,10 +80,11 @@ def pct_to_unit(x):
         x = float(str(x).replace(",", "."))
     except Exception:
         return None
+    if np.isnan(x):
+        return None
     if x < 0 or x > 100:
         return None
     return x / 100.0
-
 
 def unit_to_pct(x):
     return None if x is None else x * 100.0
@@ -121,7 +122,6 @@ def load_digital_channels_table(path: Path = DIGITAL_CHANNELS_CSV) -> pd.DataFra
     """
     Expected columns: name, category, aliases (pipe-separated: a|b|c)
     """
-    # try primary then /mnt/data
     if not path.exists():
         alt_path = Path("/mnt/data") / path.name
         if alt_path.exists():
@@ -137,7 +137,6 @@ def load_digital_channels_table(path: Path = DIGITAL_CHANNELS_CSV) -> pd.DataFra
     df["aliases"] = df["aliases"].fillna("").astype(str)
     df["name_norm"] = df["name"].str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
 
-    # surface warnings once in the UI
     warns = _validate_digital_channels_df(df)
     if warns:
         st.warning(" | ".join(warns))
@@ -166,28 +165,50 @@ def build_digital_lookups() -> Tuple[Dict[str, str], Dict[str, str]]:
             name_to_category[n] = cat
     return name_to_category, alias_to_canonical
 
-_name_to_cat, _alias_to_canon = build_digital_lookups()
+# Lazy lookups — only load when first needed, and don't crash if file is missing
+_name_to_cat: Dict[str, str] = {}
+_alias_to_canon: Dict[str, str] = {}
+_lookups_ready = False
+
+def _ensure_lookups():
+    """Load digital channel lookups once, with graceful fallbacks."""
+    global _name_to_cat, _alias_to_canon, _lookups_ready
+    if _lookups_ready:
+        return
+    try:
+        _name_to_cat, _alias_to_canon = build_digital_lookups()
+    except FileNotFoundError:
+        _name_to_cat, _alias_to_canon = {}, {}
+    except Exception as e:
+        st.warning(f"Digital channels mapping could not be loaded: {e}")
+        _name_to_cat, _alias_to_canon = {}, {}
+    finally:
+        _lookups_ready = True
 
 def canonicalize_channel(ch: str) -> str:
     """Map an alias to its canonical channel name if known."""
+    _ensure_lookups()
     n = _norm(ch)
     return _alias_to_canon.get(n, ch)
 
 def digital_category_for(ch: str) -> Optional[str]:
+    """Return the category for a channel/alias, if known."""
+    _ensure_lookups()
     return _name_to_cat.get(_norm(ch))
 
 def attention_factor_for_channel(ch: str) -> float:
-    # media class first
-    if ch in ADJ:
-        return ADJ[ch]
-    cat = digital_category_for(ch)
-    if cat in ADJ:
+    """Return attention index for a channel or its category; default to 1.0."""
+    key = str(ch).strip()
+    if key in ADJ:
+        return ADJ[key]
+    cat = digital_category_for(key)
+    if cat and cat in ADJ:
         return ADJ[cat]
     return 1.0
 
+
 # -------------------- Charts --------------------
 def bar_chart(df, x_field, y_field, height=320, color="#9A3EFF"):
-    # cap height to avoid overly tall charts with many rows
     auto_height = min(max(height, 36 * max(1, len(df))), 800)
     return (
         alt.Chart(df)
@@ -207,7 +228,6 @@ def compute_union(chans, R_dict, U_matrix):
     R_dict: dict channel -> marginal reach (0..1), already clipped to U(a,a)
     U_matrix: DataFrame (0..1) with U(a,a)=monthly users, U(a,b)=monthly users of intersection
     """
-    # Work with a safe numeric copy (no NaNs/None)
     U = U_matrix.copy().astype(float).fillna(0.0)
 
     # Effective fraction within monthly users for each channel
@@ -216,7 +236,7 @@ def compute_union(chans, R_dict, U_matrix):
         ua = float(U.loc[a, a]) if (a in U.index and a in U.columns) else 0.0
         r[a] = 0.0 if ua <= 0 else min(1.0, float(R_dict[a]) / ua)
 
-    # Pairwise effective overlap P2 (in absolute population fraction)
+    # Pairwise effective overlap P2 (absolute fraction)
     P2 = pd.DataFrame(index=chans, columns=chans, dtype=float)
     for a in chans:
         P2.loc[a, a] = float(R_dict[a])
@@ -226,7 +246,7 @@ def compute_union(chans, R_dict, U_matrix):
             if j <= i:
                 continue
             uab = float(U.loc[a, b])
-            pab = uab * r[a] * r[b]  # scaled intersection
+            pab = uab * r[a] * r[b]
             pab = min(pab, float(R_dict[a]), float(R_dict[b]))
             P2.loc[a, b] = P2.loc[b, a] = float(pab)
 
@@ -256,9 +276,6 @@ def compute_union(chans, R_dict, U_matrix):
 
 # -------------------- CSV loaders (cached) --------------------
 def _read_table_any_decimal(path: Path) -> pd.DataFrame:
-    """
-    Try common separators/decimal conventions: default CSV, or ; with , decimal.
-    """
     try:
         return pd.read_csv(path, index_col=0)
     except Exception:
@@ -266,18 +283,11 @@ def _read_table_any_decimal(path: Path) -> pd.DataFrame:
 
 @st.cache_data(ttl=60)
 def load_default_usage_matrix(path: Path = DEFAULT_USAGE_MATRIX_CSV) -> pd.DataFrame:
-    """
-    Returns a square 0..1 matrix with identical row/col labels.
-    Auto-scales if values look like %.
-    If file missing, returns a neutral identity-style fallback.
-    """
-    # try primary then /mnt/data
     if not path.exists():
         alt_path = Path("/mnt/data") / path.name
         if alt_path.exists():
             path = alt_path
         else:
-            # Fallback: identity-ish matrix on known media classes
             keys = list(ADJ.keys())
             if not keys:
                 raise FileNotFoundError(f"Missing usage matrix file: {path} (also tried {alt_path}).")
@@ -312,16 +322,6 @@ def get_usage_submatrix(chosen: List[str]) -> pd.DataFrame:
 
 @st.cache_data(ttl=60)
 def load_digital_pairs_matrix(path: Path = DIGITAL_PAIRS_MATRIX_CSV) -> pd.DataFrame:
-    """
-    Robust loader for the digital pairs matrix.
-
-    Accepts BOTH:
-      • legacy files (sep=';', decimal=',')
-      • your new format (sep=',', decimal='.')
-
-    Returns a % matrix in [0, 100] with clean string labels.
-    """
-    # locate file (repo first, then /mnt/data)
     if not path.exists():
         alt_path = Path("/mnt/data") / path.name
         if not alt_path.exists():
@@ -329,19 +329,15 @@ def load_digital_pairs_matrix(path: Path = DIGITAL_PAIRS_MATRIX_CSV) -> pd.DataF
         path = alt_path
 
     def _clean(df: pd.DataFrame) -> pd.DataFrame:
-        # If index isn't set properly, set it to the first column when that column is non-numeric
         if df.index.name is None and df.shape[1] > 0:
             if not pd.api.types.is_numeric_dtype(df.iloc[:, 0]):
                 df = df.set_index(df.columns[0])
 
-        # Drop accidental "Unnamed: ..." columns
         df = df.loc[:, [c for c in df.columns if not str(c).strip().lower().startswith("unnamed")]]
 
-        # Standardize labels
         df.index = [str(i).strip() for i in df.index]
         df.columns = [str(c).strip() for c in df.columns]
 
-        # Coerce values to numeric, handling % signs, nbsp, and comma decimals
         df = df.applymap(
             lambda x: pd.to_numeric(
                 str(x).replace("\u00a0", " ").replace("%", "").strip().replace(",", "."),
@@ -349,23 +345,20 @@ def load_digital_pairs_matrix(path: Path = DIGITAL_PAIRS_MATRIX_CSV) -> pd.DataF
             )
         )
 
-        # If values look like 0–1, scale to %
         with np.errstate(all="ignore"):
             maxv = float(np.nanmax(df.to_numpy())) if df.size else 0.0
         if maxv <= 1.5:
             df = df * 100.0
 
-        # Clip to [0,100]
         return df.clip(lower=0, upper=100)
 
-    # Try auto-detecting the delimiter first (handles "," and ";")
     try:
         df = pd.read_csv(
             path,
             engine="python",
-            sep=None,              # autodetect delimiter
-            decimal=".",           # start with dot-decimal
-            encoding="utf-8-sig",  # eats BOM if present
+            sep=None,
+            decimal=".",
+            encoding="utf-8-sig",
         )
         df = _clean(df)
         if len(df) >= 2 and df.shape[1] >= 2:
@@ -373,14 +366,12 @@ def load_digital_pairs_matrix(path: Path = DIGITAL_PAIRS_MATRIX_CSV) -> pd.DataF
     except Exception:
         pass
 
-    # Fallback 1: legacy semicolon + comma decimals
     try:
         df = pd.read_csv(path, sep=";", decimal=",", encoding="utf-8-sig", index_col=0)
         return _clean(df)
     except Exception:
         pass
 
-    # Fallback 2: force comma + dot decimals
     df = pd.read_csv(path, sep=",", decimal=".", encoding="utf-8-sig")
     return _clean(df)
 
@@ -421,7 +412,7 @@ if mode == MODE_LABELS[0]:
     st.metric("Overall Cross-Media Reach", f"{cross:.1%}")
 
     chart_df = pd.DataFrame({"Channel": channels, "Media reach": r_input})
-    chart_df = chart_df[chart_df["Channel"].str.strip() != ""]  # filter out blank labels
+    chart_df = chart_df[chart_df["Channel"].str.strip() != ""]
     st.altair_chart(bar_chart(chart_df, "Channel", "Media reach", height=320), use_container_width=True)
 
     with st.expander("Details"):
@@ -441,33 +432,32 @@ elif mode == MODE_LABELS[1]:
         "The **monthly usage** matrix U(A) and U(A∩B) is editable at the end."
     )
 
-    # Media catalog from attention map (keeps one source of truth)
     catalog = list(ADJ.keys())
-
     chosen = st.multiselect("Channels to include", catalog, default=[c for c in ["TV", "Social media", "Radio"] if c in catalog])
     if len(chosen) < 2:
         st.info("Select at least two channels to calculate.")
         st.stop()
 
-    # Load default usage matrix (0..1), then take submatrix for chosen
     try:
         U0_units = get_usage_submatrix(chosen)  # 0..1
     except Exception as e:
         st.error(f"Failed to load usage matrix: {e}")
         st.stop()
 
-    if "reach_values" not in st.session_state:
-        st.session_state["reach_values"] = {}
-
-    init_reach = [float(st.session_state["reach_values"].get(ch, 0.0)) for ch in chosen]
-    marg_df = pd.DataFrame({"Channel": chosen, "Reach %": init_reach}).astype({"Reach %": float})
-
+    # Build reach editor (let the editor manage its own state by key)
+    marg_df = pd.DataFrame({"Channel": chosen, "Reach %": [0.0] * len(chosen)}).astype({"Reach %": float})
     editor_key = "media_reach_editor__" + "|".join(chosen)
     marg_edit = st.data_editor(
         marg_df,
         column_config={
             "Channel": st.column_config.TextColumn(disabled=True),
-            "Reach %": st.column_config.NumberColumn("Reach %", min_value=0.0, max_value=100.0, step=0.1, format="%.1f"),
+            "Reach %": st.column_config.NumberColumn(
+                "Reach %",
+                min_value=0.0,
+                max_value=100.0,
+                step=0.1,
+                format="%.1f",
+            ),
         },
         num_rows="fixed",
         hide_index=True,
@@ -475,11 +465,13 @@ elif mode == MODE_LABELS[1]:
         key=editor_key,
     )
 
-    for i, ch in enumerate(chosen):
-        val = marg_edit.loc[i, "Reach %"]
-        st.session_state["reach_values"][ch] = 0.0 if pd.isna(val) else float(val)
-
-    R_raw = {ch: pct_to_unit(st.session_state["reach_values"][ch]) for ch in chosen}
+    # Robustly read reach from editor output (guard NaNs)
+    vals_series = pd.to_numeric(marg_edit["Reach %"], errors="coerce")
+    if vals_series.isna().any():
+        gray_notice('Fill all <strong>“Reach %”</strong> cells to calculate results.')
+        st.stop()
+    vals = vals_series.astype(float).tolist()
+    R_raw = {ch: pct_to_unit(v) for ch, v in zip(chosen, vals)}
     if any(R_raw[ch] is None for ch in chosen):
         gray_notice('Enter a <strong>media reach (%)</strong> for each selected channel to calculate results.')
         st.stop()
@@ -487,17 +479,17 @@ elif mode == MODE_LABELS[1]:
         st.error("Media reach values must be between 0 and 100%.")
         st.stop()
 
-    # Prepare an editable % matrix in session state (start from defaults in %)
+    # Editable % matrix in session state
     key_mat = "usage_matrix_df"
     if (key_mat not in st.session_state
         or list(st.session_state[key_mat].index) != chosen
         or list(st.session_state[key_mat].columns) != chosen):
         st.session_state[key_mat] = (U0_units * 100.0).round(1)
 
-    U_df_pct = st.session_state[key_mat].copy()  # % for UI
+    U_df_pct = st.session_state[key_mat].copy()
     U = to_unit_df_from_pct(U_df_pct)
 
-    # Symmetrize off-diagonals and fill missing with 0.0
+    # Symmetrize and enforce constraints
     for i, a in enumerate(chosen):
         for j, b in enumerate(chosen):
             if j <= i:
@@ -508,20 +500,19 @@ elif mode == MODE_LABELS[1]:
             v = float(np.mean(both)) if both else 0.0
             U.loc[a, b] = U.loc[b, a] = v
 
-    # Validate diagonals and clip impossible off-diagonals
     for a in chosen:
         ua = float(U.loc[a, a])
         if not (0.0 <= ua <= 1.0):
             st.error(f"Monthly usage U({a}) must be between 0% and 100%. Got {ua*100:.1f}%.")
             st.stop()
-    # Enforce feasibility: U(a,b) ≤ min(U(a,a), U(b,b))
+
     for a in chosen:
         for b in chosen:
             if a == b:
                 continue
             U.loc[a, b] = float(min(U.loc[a, b], U.loc[a, a], U.loc[b, b]))
 
-    # Clip R to U(a,a)
+    # Clip R to U(a,a) and compute
     clipped = []
     for a in chosen:
         ua = float(U.loc[a, a])
@@ -561,7 +552,7 @@ elif mode == MODE_LABELS[1]:
     with att_left:
         st.metric("Reach", f"{est_att:.1%}")
         st.caption(f"Bounds: LB≈{lb_att:.1%}, UB≈{ub_att:.1%}")
-    with att_right:
+    with att_right:  # fixed (use att_right, not reg_right)
         reach_df_att = pd.DataFrame({"Channel": chans, "Media reach": [R_attentive[c] for c in chans]})
         st.altair_chart(bar_chart(reach_df_att, "Channel", "Media reach", height=280, color="#FEC8FF"),
                         use_container_width=True)
@@ -574,13 +565,12 @@ elif mode == MODE_LABELS[1]:
             num_rows="fixed",
             key="usage_matrix_editor_bottom",
         )
-        # Keep in session state
         st.session_state[key_mat] = edited
 
         diag = pd.DataFrame({
             "Channel": chans,
             "Adjustment": [ADJ.get(c, 1.0) for c in chans],
-            "Reach % (input)": [st.session_state["reach_values"].get(c) for c in chans],
+            "Reach % (input)": vals,
             "Reach % (Regular)": [R_regular[c] * 100 for c in chans],
             "Reach % (Attentive)": [R_attentive[c] * 100 for c in chans],
             "U(A) % (monthly users)": [float(U.loc[c, c]) * 100 for c in chans],
@@ -609,7 +599,7 @@ elif mode == MODE_LABELS[2]:
     try:
         digital_pct = load_digital_pairs_matrix()  # % 0..100
     except FileNotFoundError as e:
-        st.error(f"`{DIGITAL_PAIRS_MATRIX_CSV}` not found. {e}")
+        st.error(f"{DIGITAL_PAIRS_MATRIX_CSV} not found. {e}")
         st.stop()
     except Exception as e:
         st.error(f"Failed to load digital pairs matrix: {e}")
@@ -622,18 +612,15 @@ elif mode == MODE_LABELS[2]:
         gray_notice("Select at least <strong>two</strong> digital channels.")
         st.stop()
 
-    # --- state for reach and attention overrides ---
-    if "reach_values_digital" not in st.session_state:
-        st.session_state["reach_values_digital"] = {}
+    # state only for attention overrides; reach comes directly from editor
     if "attention_overrides" not in st.session_state:
         st.session_state["attention_overrides"] = {}
 
-    # main editable table WITHOUT attention column
-    reach_init = [float(st.session_state["reach_values_digital"].get(ch, 0.0)) for ch in chosen]
+    # reach editor (no mirroring)
     marg_df = pd.DataFrame({
         "Channel": chosen,
         "Category": [digital_category_for(ch) or "—" for ch in chosen],
-        "Reach %": reach_init,
+        "Reach %": [0.0] * len(chosen),
     }).astype({"Reach %": float})
 
     editor_key = "media_reach_editor_digital__" + "|".join(chosen)
@@ -642,7 +629,13 @@ elif mode == MODE_LABELS[2]:
         column_config={
             "Channel": st.column_config.TextColumn(disabled=True),
             "Category": st.column_config.TextColumn(disabled=True),
-            "Reach %": st.column_config.NumberColumn("Reach %", min_value=0.0, max_value=100.0, step=0.1, format="%.1f"),
+            "Reach %": st.column_config.NumberColumn(
+                "Reach %",
+                min_value=0.0,
+                max_value=100.0,
+                step=0.1,
+                format="%.1f",
+            ),
         },
         num_rows="fixed",
         hide_index=True,
@@ -650,19 +643,13 @@ elif mode == MODE_LABELS[2]:
         key=editor_key,
     )
 
-    # write back reach edits
-    for i, ch in enumerate(chosen):
-        r_val = marg_edit.loc[i, "Reach %"]
-        st.session_state["reach_values_digital"][ch] = 0.0 if pd.isna(r_val) else float(r_val)
-
-    # load current attention values (defaults if no override set yet)
-    att_idx: Dict[str, float] = {}
-    for ch in chosen:
-        # ensure we consider aliases if user-supplied in the CSV
-        canon = canonicalize_channel(ch)
-        att_idx[canon] = float(st.session_state["attention_overrides"].get(canon, attention_factor_for_channel(canon)))
-
-    R_raw = {ch: pct_to_unit(st.session_state["reach_values_digital"][ch]) for ch in chosen}
+    # Robustly read reach values (guard NaNs)
+    vals_series = pd.to_numeric(marg_edit["Reach %"], errors="coerce")
+    if vals_series.isna().any():
+        gray_notice('Fill all <strong>“Reach %”</strong> cells.')
+        st.stop()
+    vals = vals_series.astype(float).tolist()
+    R_raw = {ch: pct_to_unit(v) for ch, v in zip(chosen, vals)}
     if any(R_raw[ch] is None for ch in chosen):
         gray_notice('Enter a <strong>media reach (%)</strong> for each selected channel.')
         st.stop()
@@ -670,9 +657,9 @@ elif mode == MODE_LABELS[2]:
         st.error("Media reach values must be between 0 and 100%.")
         st.stop()
 
-    U_df_pct = digital_pct.loc[chosen, chosen].copy()                # % for UI
-    U_df_pct_display = U_df_pct.round(1)                              # tidy display
-    U = to_unit_df_from_pct(U_df_pct).astype(float)                   # 0..1
+    U_df_pct = digital_pct.loc[chosen, chosen].copy()
+    U_df_pct_display = U_df_pct.round(1)
+    U = to_unit_df_from_pct(U_df_pct).astype(float)
 
     # Validate diagonals
     for a in chosen:
@@ -681,7 +668,7 @@ elif mode == MODE_LABELS[2]:
             st.error(f"Monthly usage U({a}) must be between 0% and 100%. Got {ua*100:.1f}%.")
             st.stop()
 
-    # Symmetrize off-diagonals; if both NaN → 0.0
+    # Symmetrize off-diagonals
     for i, a in enumerate(chosen):
         for j, b in enumerate(chosen):
             if j <= i:
@@ -690,21 +677,26 @@ elif mode == MODE_LABELS[2]:
             v = 0.0 if np.isnan(mean_val) else float(mean_val)
             U.loc[a, b] = U.loc[b, a] = v
 
-    # Enforce feasibility: U(a,b) ≤ min(U(a,a), U(b,b))
+    # Enforce feasibility
     for a in chosen:
         for b in chosen:
             if a == b:
                 continue
             U.loc[a, b] = float(min(U.loc[a, b], U.loc[a, a], U.loc[b, b]))
 
-    # Clip marginals to usage
+    # Attention idx — defaults & overrides
+    att_idx: Dict[str, float] = {}
+    for ch in chosen:
+        canon = canonicalize_channel(ch)
+        att_idx[canon] = float(st.session_state["attention_overrides"].get(canon, attention_factor_for_channel(canon)))
+
+    # Clip to usage and compute
     clipped = []
     for a in chosen:
         ua = float(U.loc[a, a])
         if R_raw[a] - ua > 1e-9:
             clipped.append((a, R_raw[a], ua))
     R_regular = {a: min(R_raw[a], float(U.loc[a, a])) for a in chosen}
-    # Apply attention; clamp to U(a,a)
     R_attentive = {ch: float(np.clip(R_regular[ch] * att_idx[canonicalize_channel(ch)], 0.0, float(U.loc[ch, ch]))) for ch in chosen}
 
     if clipped:
