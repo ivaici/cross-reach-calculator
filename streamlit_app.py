@@ -208,7 +208,7 @@ def attention_factor_for_channel(ch: str) -> float:
 
 
 # -------------------- Charts --------------------
-def bar_chart(df, x_field, y_field, height=320, color="#9A3EFF"):
+def bar_chart(df, x_field, y_field, height=320, color="#000050"):
     auto_height = min(max(height, 36 * max(1, len(df))), 800)
     return (
         alt.Chart(df)
@@ -542,7 +542,7 @@ elif mode == MODE_LABELS[1]:
         st.caption(f"Bounds: LB≈{lb_reg:.1%}, UB≈{ub_reg:.1%}")
     with reg_right:
         reach_df_reg = pd.DataFrame({"Channel": chans, "Media reach": [R_regular[c] for c in chans]})
-        st.altair_chart(bar_chart(reach_df_reg, "Channel", "Media reach", height=280, color="#9A3EFF"),
+        st.altair_chart(bar_chart(reach_df_reg, "Channel", "Media reach", height=280, color="#000050"),
                         use_container_width=True)
 
     st.divider()
@@ -720,7 +720,7 @@ elif mode == MODE_LABELS[2]:
         st.caption(f"Bounds: LB≈{lb_reg:.1%}, UB≈{ub_reg:.1%}")
     with reg_right:
         reach_df_reg = pd.DataFrame({"Channel": chans, "Media reach": [R_regular[c] for c in chans]})
-        st.altair_chart(bar_chart(reach_df_reg, "Channel", "Media reach", height=280, color="#9A3EFF"),
+        st.altair_chart(bar_chart(reach_df_reg, "Channel", "Media reach", height=280, color="#000050"),
                         use_container_width=True)
 
     st.divider()
