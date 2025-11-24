@@ -554,7 +554,7 @@ elif mode == MODE_LABELS[1]:
         st.caption(f"Bounds: LB≈{lb_att:.1%}, UB≈{ub_att:.1%}")
     with att_right:  # fixed (use att_right, not reg_right)
         reach_df_att = pd.DataFrame({"Channel": chans, "Media reach": [R_attentive[c] for c in chans]})
-        st.altair_chart(bar_chart(reach_df_att, "Channel", "Media reach", height=280, color="#FEC8FF"),
+        st.altair_chart(bar_chart(reach_df_att, "Channel", "Media reach", height=280, color="#00DBEE"),
                         use_container_width=True)
 
     with st.expander("Math & inputs ▸ Monthly usage matrix U (edit if needed)"):
@@ -732,7 +732,7 @@ elif mode == MODE_LABELS[2]:
         st.caption(f"Bounds: LB≈{lb_att:.1%}, UB≈{ub_att:.1%}")
     with att_right:
         reach_df_att = pd.DataFrame({"Channel": chans, "Media reach": [R_attentive[c] for c in chans]})
-        st.altair_chart(bar_chart(reach_df_att, "Channel", "Media reach", height=280, color="#FEC8FF"),
+        st.altair_chart(bar_chart(reach_df_att, "Channel", "Media reach", height=280, color="#00DBEE"),
                         use_container_width=True)
 
     with st.expander("Math & inputs ▸ Digital U matrix (read-only source) & Attention idx"):
